@@ -21,20 +21,20 @@ Real-world platforms like Spotify and YouTube combine two ideas. **Collaborative
 
 ### Song features
 
-Each `Song` stores: `id`, `title`, `artist`, `genre`, `mood`, `energy`, `tempo_bpm`, `valence`, `danceability`, `acousticness`.
+Each `Song` stores: `id`, `title`, `artist`, `genre`, `mood`, `energy`, `tempo_bpm`, `valence`, `danceability`, `acousticness`. It also has six optional extension fields (invented values, all defaulting to empty): `popularity`, `release_decade`, `mood_tags`, `instrumentalness`, `speechiness`, `language` (see "Optional Extensions" at the end).
 
-Used in scoring: `energy`, `mood`, `genre`, and `valence`. The rest are kept for display and future experiments. `tempo_bpm`, `danceability`, and `acousticness` are left out of the core score because they correlate strongly with energy in this catalog (r = 0.89, 0.66, and -0.91 across the 20-song catalog), so including them would mostly count the same signal several times.
+Used in the base score: `energy`, `mood`, `genre`, and `valence`. The six extension fields are only scored when a profile asks for them. The rest are kept for display and future experiments. `tempo_bpm`, `danceability`, and `acousticness` are left out of the core score because they correlate strongly with energy in this catalog (r = 0.89, 0.66, and -0.91 across the 20-song catalog), so including them would mostly count the same signal several times.
 
 ### UserProfile features
 
-Each `UserProfile` stores: `favorite_genre`, `favorite_mood`, `target_energy`, `likes_acoustic`. An optional `target_valence` field (empty by default) adds the valence term to the score.
+Each `UserProfile` stores: `favorite_genre`, `favorite_mood`, `target_energy`, `likes_acoustic`. An optional `target_valence` field (empty by default) adds the valence term to the score. Six more optional fields (`mood_tags`, `decade`, `popularity`, `instrumentalness`, `speechiness`, `language`, all `None` by default) switch on the extension terms.
 
 ### Data flow
 
 ```mermaid
 flowchart TD
     subgraph INPUT["INPUT"]
-        U["User taste profile<br/>genre, mood, energy, valence"]
+        U["User taste profile<br/>genre, mood, energy, valence<br/>(plus optional extension keys)"]
         CSV["data/songs.csv<br/>20 songs"] --> LOAD["load_songs()<br/>list of song dicts"]
     end
 
@@ -44,10 +44,12 @@ flowchart TD
         SCORE --> M["Mood match (max 2.0)"]
         SCORE --> V["Valence closeness (max 1.0)"]
         SCORE --> G["Genre match (max 1.0)"]
+        SCORE -.-> X["Optional extension terms (max 5.0 in total)<br/>tags, decade, popularity,<br/>instrumentalness, speechiness, language"]
         E --> SUM["Total score + reasons"]
         M --> SUM
         V --> SUM
         G --> SUM
+        X -.-> SUM
         SUM --> STORE["Save (song, score, explanation)"]
         STORE --> MORE{"More songs?"}
         MORE -->|yes| NEXT
@@ -77,6 +79,8 @@ score = 4.0 * exp(-(song.energy - target_energy)^2 / (2 * 0.25^2))   # energy cl
 ```
 
 The maximum score is 8.0. Targets outside 0 to 1 are clamped to that range first.
+
+This base recipe is unchanged. The extension terms (see "Optional Extensions") are opt-in: each one is added only when the profile contains its key, and together they add up to at most +5.0. So the maximum is 8.0 for a base profile and up to 13.0 for a profile that uses every extension key.
 
 | Term | Max points | Why |
 |---|---|---|
@@ -134,6 +138,8 @@ python -m src.main               # default pop/happy profile
 python -m src.main lofi/chill    # any profile name in src/main.py
 python -m src.main all           # the four everyday profiles
 python -m src.main adversarial   # the six edge-case profiles
+python -m src.main extensions    # the four profiles that use the extension attributes
+python -m src.main ext-90s-nostalgia   # one extension profile (also ext-hidden-gems, ext-instrumental-focus, ext-chart-hits)
 ```
 
 ### Running Tests
@@ -144,7 +150,7 @@ Run the tests with:
 pytest
 ```
 
-There are 11 tests in `tests/test_recommender.py`. They check the `Recommender` class (including a reversed-input test and a match against the function-based version) and the input cleaning, not exact scores.
+There are 45 test cases in `tests/test_recommender.py` (`pytest --collect-only -q` counts parametrized cases separately). They check the `Recommender` class (including a reversed-input test and a match against the function-based version), the input cleaning, and the extension attributes (CSV loading, each scoring term with hand-computed values, the `UserProfile` extension fields, and the `extensions` CLI keyword). A few extension tests check exact scores; the original tests do not.
 
 ---
 
@@ -196,7 +202,7 @@ Loaded songs: 20
      - genre match: pop (+1.00)
 ```
 
-Other profiles are defined in `PROFILES` in `src/main.py`. For example, `python -m src.main lofi/chill` runs the late-night study listener.
+Other profiles are defined in `PROFILES` in `src/main.py` (the extension profiles are in `EXTENSION_PROFILES`, see "Optional Extensions"). For example, `python -m src.main lofi/chill` runs the late-night study listener.
 
 ---
 
@@ -204,7 +210,7 @@ Other profiles are defined in `PROFILES` in `src/main.py`. For example, `python 
 
 ### Stress test: diverse profiles
 
-Profiles live in `PROFILES` and `ADVERSARIAL_PROFILES` in `src/main.py`. The adversarial ones came from a separate "System Evaluation" review session that was asked to design profiles that could trick the scoring logic. Every block below is real terminal output (`python -m src.main <profile>`). The pop/happy profile is shown in "Sample Recommendation Output" above.
+Profiles live in `PROFILES` and `ADVERSARIAL_PROFILES` in `src/main.py`. (A fourth dict, `EXTENSION_PROFILES`, holds the four profiles for the optional extra song attributes. They are not part of this ten-profile evaluation.) The adversarial ones came from a separate "System Evaluation" review session that was asked to design profiles that could trick the scoring logic. Every block below is real terminal output (`python -m src.main <profile>`). The pop/happy profile is shown in "Sample Recommendation Output" above.
 
 #### Three distinct everyday profiles
 
@@ -699,12 +705,12 @@ Output of `python -m src.main pop/happy` with the experimental weights:
 
 ## Limitations and Risks
 
-- **Tiny catalog.** There are 20 songs and most genres appear once. Ten songs have invented numbers, not measurements.
+- **Tiny catalog.** There are 20 songs and most genres appear once. The numbers are invented, not measurements: I wrote the energy, valence, and other base values for 10 of the songs, and the extension values (popularity, decade, mood tags, instrumentalness, speechiness, language) are invented for all 20.
 - **Energy dominates.** It is half of the points. Listeners who want very quiet music (below 0.30 energy) are served worst, because the catalog has almost no songs there.
 - **Labels must match word for word.** "Indie pop" earns nothing for a "pop" listener, and "romantic" is in no group of related moods.
 - **One taste per profile.** A profile cannot hold several favorites or dislikes. `likes_acoustic` is stored but not scored.
-- **Weak matches look confident.** The system always prints five songs, even when nothing matched, and it gives no warning. (Bad input is handled: numbers are clamped to 0 to 1, capital letters and extra spaces are ignored, and a non-numeric target or an empty profile raises a clear error.)
-- **No lyrics, language, or era.** It also learns nothing from skips or likes, so it can only narrow taste, never widen it.
+- **Weak matches look confident.** The system always prints five songs, even when nothing matched, and it gives no warning. (Bad input is handled: numbers are clamped to their range, capital letters and extra spaces are ignored, and a non-numeric target or an empty profile raises a clear error. Values inside `songs.csv` are not checked, so a typo such as text in the `popularity` column crashes the scorer, and a NaN or out-of-range number gives odd output.)
+- **No lyrics.** The base score ignores language and era, and the optional extension terms only use my invented `language` and `release_decade` values, never real lyrics. The system also learns nothing from skips or likes, so it can only narrow taste, never widen it.
 
 The model card covers these in more detail (sections 5 and 6).
 
@@ -717,3 +723,100 @@ The full model card is here: [**Model Card**](model_card.md). My personal reflec
 **How recommenders turn data into predictions.** A recommender compares numbers and labels. In my version, each song earns points for how close its energy and sunniness are to the listener's targets, plus points for matching mood and genre. Then a sort picks the top five. Even this tiny version felt like a real recommendation, partly because it explains every pick. It never understands the music, though. It only sees the numbers and tags it was given.
 
 **Where bias or unfairness can show up.** Bias hides in small choices. I gave energy half of all the points, so listeners who want very quiet music were served worst. Labels must match word for word, so an "indie pop" song earns nothing for a "pop" listener. The catalog has one song for most genres, so some listeners get a full list of good matches and others get filler. A real app with millions of songs hides the same problems behind a confident-looking list. It is worth asking who the catalog and the weights were built for.
+
+---
+
+## Optional Extensions
+
+### Challenge 1: Advanced song features
+
+**What I added.** Six new columns in `data/songs.csv`. All values are invented (written by the AI assistant and checked by me), not measured from real music:
+
+- `popularity`: a 0 to 100 "how well known" number.
+- `release_decade`: the decade the song came out, such as 1990.
+- `mood_tags`: two or three detailed vibe words, separated by `|` (for example `nostalgic|warm|sentimental`).
+- `instrumentalness`: 0 to 1, how much of the song has no vocals.
+- `speechiness`: 0 to 1, how much of the song is spoken words.
+- `language`: the sung language (`en`, `es`, or the pseudo-value `instrumental`).
+
+**How to use them.** Add any of these keys to a profile. A profile that leaves them out scores exactly as before (I checked this against saved output of the original ten profiles).
+
+```python
+{
+    "genre": "country", "mood": "nostalgic", "energy": 0.55, "valence": 0.65,
+    "mood_tags": ["nostalgic", "warm"],   # or "nostalgic|warm"
+    "decade": "1990s",                    # 1990, "1990s", or a year like 1994
+    "popularity": 40,                     # 0 to 100
+    "instrumentalness": 0.0, "speechiness": 0.05, "language": "en",
+}
+```
+
+Run the four ready-made profiles with `python -m src.main extensions`, or one by name: `ext-90s-nostalgia`, `ext-hidden-gems`, `ext-instrumental-focus`, `ext-chart-hits`. The object-style `UserProfile` has the same six optional fields.
+
+**Scoring terms.** Each term is added only when the profile has its key and the song has the value:
+
+| Key | Max points | Rule |
+|---|---|---|
+| `mood_tags` | 1.5 | 1.5 times the share of requested tags the song has |
+| `decade` | 1.0 | closeness, falling to 0 at 50 years apart |
+| `popularity` | 1.0 | `1 - gap / 100` |
+| `instrumentalness` | 0.5 | `1 - gap` |
+| `speechiness` | 0.5 | `1 - gap` |
+| `language` | 0.5 | exact match |
+
+The terms add up to at most 5.0, on top of the base 8.0.
+
+**Real output** of `python -m src.main ext-90s-nostalgia`:
+
+```
+Loaded songs: 20
+================================================================
+ Top 5 recommendations for profile: ext-90s-nostalgia
+ Targets: genre=country, mood=nostalgic, energy=0.55, valence=0.65, mood_tags=nostalgic|warm|sentimental, decade=1990
+================================================================
+
+1. Dust Road Home by Hollow Pines
+   Score: 10.49   (country, nostalgic)
+   Why:
+     - energy 0.55 vs target 0.55 (+4.00)
+     - mood match: nostalgic (+2.00)
+     - valence 0.66 vs target 0.65 (+0.99)
+     - genre match: country (+1.00)
+     - mood tags matched 3 of 3 requested: nostalgic, warm, sentimental (+1.50)
+     - decade 1990s vs target 1990s (+1.00)
+
+2. Velvet Hours by Luna Marsh
+   Score: 6.32   (r&b, romantic)
+   Why:
+     - energy 0.48 vs target 0.55 (+3.85)
+     - valence 0.62 vs target 0.65 (+0.97)
+     - mood tags matched 1 of 3 requested: warm (+0.50)
+     - decade 1990s vs target 1990s (+1.00)
+
+3. Hazy Static by Glass Orchard
+   Score: 6.27   (shoegaze, dreamy)
+   Why:
+     - energy 0.52 vs target 0.55 (+3.97)
+     - valence 0.45 vs target 0.65 (+0.80)
+     - mood tags matched 1 of 3 requested: nostalgic (+0.50)
+     - decade 1990s vs target 1990s (+1.00)
+
+4. Island Breeze by Sol Rivera
+   Score: 6.06   (reggae, uplifting)
+   Why:
+     - energy 0.58 vs target 0.55 (+3.97)
+     - valence 0.86 vs target 0.65 (+0.79)
+     - mood tags matched 1 of 3 requested: warm (+0.50)
+     - decade 1980s vs target 1990s (+0.80)
+
+5. Paper Boats by Willow & Ash
+   Score: 6.05   (folk, wistful)
+   Why:
+     - energy 0.33 vs target 0.55 (+2.72)
+     - similar mood: wistful is close to nostalgic (+1.00)
+     - valence 0.38 vs target 0.65 (+0.73)
+     - mood tags matched 2 of 3 requested: warm, sentimental (+1.00)
+     - decade 1970s vs target 1990s (+0.60)
+```
+
+The 1990s songs move up the list because of the decade and tag terms, even when their energy is a little off.

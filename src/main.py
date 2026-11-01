@@ -6,11 +6,12 @@ Usage (from the project root):
     python -m src.main lofi/chill   # any profile name from PROFILES
     python -m src.main all          # run every profile in PROFILES
     python -m src.main adversarial  # run the edge-case profiles
+    python -m src.main extensions   # run the profiles that use the extra song attributes
 """
 
 import sys
 
-from src.recommender import load_songs, recommend_songs
+from src.recommender import EXTENSION_KEYS, load_songs, recommend_songs
 
 PROFILES = {
     "pop/happy": {
@@ -75,7 +76,35 @@ ADVERSARIAL_PROFILES = {
         "energy": 0.48, "valence": 0.62, "likes_acoustic": False,
     },
 }
-ALL_PROFILES = {**PROFILES, **ADVERSARIAL_PROFILES}
+# Profiles that also use the extension attributes (mood_tags, decade, popularity, ...)
+EXTENSION_PROFILES = {
+    # Wants warm, wistful 1990s songs; popularity does not matter
+    "ext-90s-nostalgia": {
+        "genre": "country", "mood": "nostalgic",
+        "energy": 0.55, "valence": 0.65, "likes_acoustic": True,
+        "mood_tags": ["nostalgic", "warm", "sentimental"], "decade": 1990,
+    },
+    # Wants quiet, little-known music from the back of the catalog
+    "ext-hidden-gems": {
+        "genre": "folk", "mood": "wistful",
+        "energy": 0.33, "valence": 0.40, "likes_acoustic": True,
+        "popularity": 15, "mood_tags": "melancholic|warm",
+    },
+    # Wants vocal-free music to work to
+    "ext-instrumental-focus": {
+        "genre": "lofi", "mood": "focused",
+        "energy": 0.40, "valence": 0.60, "likes_acoustic": True,
+        "instrumentalness": 0.95, "speechiness": 0.0, "language": "instrumental",
+        "mood_tags": ["calm", "steady"],
+    },
+    # Wants loud, sung-along pop hits
+    "ext-chart-hits": {
+        "genre": "pop", "mood": "happy",
+        "energy": 0.85, "valence": 0.80, "likes_acoustic": False,
+        "popularity": 90, "decade": "2010s", "language": "en",
+    },
+}
+ALL_PROFILES = {**PROFILES, **ADVERSARIAL_PROFILES, **EXTENSION_PROFILES}
 DEFAULT_PROFILE = "pop/happy"
 WIDTH = 64
 
@@ -88,6 +117,14 @@ def print_recommendations(profile_name: str, user_prefs: dict, recommendations: 
         for key in ("genre", "mood", "energy", "valence")
         if key in user_prefs
     )
+    extras = ", ".join(
+        f"{key}={'|'.join(user_prefs[key]) if isinstance(user_prefs[key], (list, tuple)) else user_prefs[key]}"
+        for key in EXTENSION_KEYS
+        if key in user_prefs
+    )
+    if extras:
+        targets += f", {extras}"
+
     print(f" Targets: {targets}")
     print("=" * WIDTH)
 
@@ -106,11 +143,13 @@ def main() -> None:
         profile_names = list(PROFILES)
     elif arg == "adversarial":
         profile_names = list(ADVERSARIAL_PROFILES)
+    elif arg == "extensions":
+        profile_names = list(EXTENSION_PROFILES)
     elif arg in ALL_PROFILES:
         profile_names = [arg]
     else:
         sys.exit(
-            f"Unknown profile '{arg}'. Choose from: all, adversarial, {', '.join(ALL_PROFILES)}"
+            f"Unknown profile '{arg}'. Choose from: all, adversarial, extensions, {', '.join(ALL_PROFILES)}"
         )
 
     songs = load_songs("data/songs.csv")

@@ -46,6 +46,47 @@ I used Claude Code as an agent across all six phases to plan, build, test, and d
 
 ---
 
+## Challenge 1: Advanced Song Features
+
+**What task did you give the agent?**
+
+The challenge was "Add Advanced Song Features": give the songs more attributes and use them in the score. I split the job between three agent roles, and I did the git work and the checks myself:
+
+- Agent A built it.
+- Agent B reviewed A's work, read-only.
+- Agent C fixed B's findings and updated the docs and this log.
+
+**Prompts used:**
+
+- To Agent A (shortened): "Add at least 5 new song attributes to `data/songs.csv` (for example popularity, release decade, detailed mood tags), write the values yourself and say they are invented, and add scoring terms for them. Everything new must be opt-in: a profile without the new keys must score byte for byte as before. Add tests."
+- Shared rule for all agents: "Default behavior must stay exactly the same. A regression guard compares the top 5 and the scores of the original 10 profiles and the CLI output of `all` and `adversarial` against saved files. New options are extras. Do not run git add, commit, or reset."
+- To Agent B (shortened): "Review A's work read-only. Do not trust A's claims. Hand-compute scores for several songs and compare them with the code. Run a mutation test to see whether the tests really notice a changed weight. List findings as must-fix, should-fix, or nit."
+- To Agent C (shortened): "Fix B's findings: add the missing tests, make `load_songs` read decades like a profile does, make blank extension values count as absent, give `UserProfile` the new optional fields. Fix every stale statement in README.md and model_card.md, add the 'Optional Extensions' section, and update this log."
+
+**What did the agent generate or change?**
+
+- `data/songs.csv`: six new columns for all 20 songs, with invented values: `popularity`, `release_decade`, `mood_tags`, `instrumentalness`, `speechiness`, `language`.
+- `src/recommender.py`: six new opt-in scoring terms (tags 1.5, decade 1.0, popularity 1.0, instrumentalness 0.5, speechiness 0.5, language 0.5, so at most +5.0), six new defaulted fields on `Song`, and checks in `clean_prefs` for the new profile keys.
+- `src/main.py`: `EXTENSION_PROFILES` (four profiles) and the `extensions` command.
+- Agent C added six optional fields to `UserProfile`, so the object-style `Recommender` can use the new preferences too.
+- `tests/test_recommender.py`: 11 original tests plus 34 new test cases (45 in total by `pytest --collect-only -q`).
+- `README.md` (new "Optional Extensions" section and updated facts), `model_card.md`, and this file.
+
+**What did you verify or fix manually?**
+
+- **Guard and tests.** I re-ran the regression guard and `pytest` myself after each stage instead of trusting the agents' reports.
+- **A wrong count.** Agent A reported "17 original tests plus 12 new". The real numbers were 11 original tests and 18 new cases (13 new test functions, one of them run six ways). B and I caught it by counting. The docs now use the number from `pytest --collect-only -q`.
+- **Agent B's checks.** B hand-computed 7 scores and all matched the code. B also compared the old and new code on 59,840 profile and song pairs, and all results were identical.
+- **A test gap found by mutation.** B showed the instrumentalness weight was almost untested, because the only case scored 0. I added cases with partial credit (Focus Flow with target 0.95 gives +0.475, and a speechiness case). Then I changed the weight to 0.6 in a copy of the repo and the new test failed, as it should. The real repo was not mutated.
+- **A crash in `load_songs`.** A CSV cell such as "1990s" crashed `load_songs`, and "1994" was kept as 1994. It now uses the same decade parsing as profiles, so both load as 1990, and a blank cell stays empty. I added a test with a temporary CSV.
+- **Blank and boolean values.** Blank extension values are now treated as absent, and `True` is rejected for popularity and the other extension numbers. The original keys (energy, valence, genre, mood) behave as before.
+- **The object-style API.** `UserProfile` could not express the new preferences. I added the optional fields, and a test checks that `Recommender.recommend` matches `recommend_songs` for an extension profile.
+- **Tests for the CLI.** I added tests for `EXTENSION_PROFILES` and for `python -m src.main extensions`.
+- **Skipped on purpose.** I did not validate song-side values in the CSV. I wrote the limit in the model card instead. I did not change the CSV for odd tags, such as "melancholic" vs the mood "melancholy", or for the language value "instrumental" that overlaps instrumentalness. I noted both in the model card. These are small and changing data would add risk.
+- **Docs.** I searched README.md and model_card.md for old counts, column lists, and the "maximum 8.0" statement, and fixed them.
+
+---
+
 ## Design Pattern (SF10)
 
 > Document how AI helped you choose or implement a design pattern.

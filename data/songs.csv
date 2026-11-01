@@ -1,21 +1,21 @@
-id,title,artist,genre,mood,energy,tempo_bpm,valence,danceability,acousticness
-1,Sunrise City,Neon Echo,pop,happy,0.82,118,0.84,0.79,0.18
-2,Midnight Coding,LoRoom,lofi,chill,0.42,78,0.56,0.62,0.71
-3,Storm Runner,Voltline,rock,intense,0.91,152,0.48,0.66,0.10
-4,Library Rain,Paper Lanterns,lofi,chill,0.35,72,0.60,0.58,0.86
-5,Gym Hero,Max Pulse,pop,intense,0.93,132,0.77,0.88,0.05
-6,Spacewalk Thoughts,Orbit Bloom,ambient,chill,0.28,60,0.65,0.41,0.92
-7,Coffee Shop Stories,Slow Stereo,jazz,relaxed,0.37,90,0.71,0.54,0.89
-8,Night Drive Loop,Neon Echo,synthwave,moody,0.75,110,0.49,0.73,0.22
-9,Focus Flow,LoRoom,lofi,focused,0.40,80,0.59,0.60,0.78
-10,Rooftop Lights,Indigo Parade,indie pop,happy,0.76,124,0.81,0.82,0.35
-11,Velvet Hours,Luna Marsh,r&b,romantic,0.48,92,0.62,0.74,0.30
-12,Concrete Crown,Kid Atlas,hip hop,confident,0.78,96,0.58,0.88,0.12
-13,Dust Road Home,Hollow Pines,country,nostalgic,0.55,104,0.66,0.60,0.72
-14,Moonlit Sonata,Elara Voss,classical,melancholy,0.22,66,0.24,0.28,0.95
-15,Iron Tide,Black Harbor,metal,angry,0.97,168,0.20,0.45,0.04
-16,Pulse Garden,Kinetic Bloom,edm,euphoric,0.92,128,0.88,0.93,0.06
-17,Island Breeze,Sol Rivera,reggae,uplifting,0.58,82,0.86,0.82,0.45
-18,Paper Boats,Willow & Ash,folk,wistful,0.33,88,0.38,0.47,0.91
-19,Sabor de Noche,Marisol Vega,latin,playful,0.80,100,0.90,0.91,0.25
-20,Hazy Static,Glass Orchard,shoegaze,dreamy,0.52,96,0.45,0.40,0.15
+id,title,artist,genre,mood,energy,tempo_bpm,valence,danceability,acousticness,popularity,release_decade,mood_tags,instrumentalness,speechiness,language
+1,Sunrise City,Neon Echo,pop,happy,0.82,118,0.84,0.79,0.18,82,2020,uplifting|bright|energetic,0.02,0.05,en
+2,Midnight Coding,LoRoom,lofi,chill,0.42,78,0.56,0.62,0.71,64,2020,calm|cozy|dreamy,0.88,0.04,instrumental
+3,Storm Runner,Voltline,rock,intense,0.91,152,0.48,0.66,0.10,71,2000,aggressive|gritty|rebellious,0.04,0.06,en
+4,Library Rain,Paper Lanterns,lofi,chill,0.35,72,0.60,0.58,0.86,41,2010,calm|cozy|nostalgic,0.91,0.03,instrumental
+5,Gym Hero,Max Pulse,pop,intense,0.93,132,0.77,0.88,0.05,88,2010,energetic|euphoric|bright,0.01,0.11,en
+6,Spacewalk Thoughts,Orbit Bloom,ambient,chill,0.28,60,0.65,0.41,0.92,28,2010,dreamy|calm|spacey,0.96,0.02,instrumental
+7,Coffee Shop Stories,Slow Stereo,jazz,relaxed,0.37,90,0.71,0.54,0.89,35,1960,warm|cozy|nostalgic,0.62,0.04,en
+8,Night Drive Loop,Neon Echo,synthwave,moody,0.75,110,0.49,0.73,0.22,58,2010,dark|nostalgic|spacey,0.78,0.03,instrumental
+9,Focus Flow,LoRoom,lofi,focused,0.40,80,0.59,0.60,0.78,52,2020,calm|steady|cozy,0.90,0.03,instrumental
+10,Rooftop Lights,Indigo Parade,indie pop,happy,0.76,124,0.81,0.82,0.35,66,2010,uplifting|sunny|warm,0.03,0.05,en
+11,Velvet Hours,Luna Marsh,r&b,romantic,0.48,92,0.62,0.74,0.30,61,1990,romantic|warm|smooth,0.02,0.08,en
+12,Concrete Crown,Kid Atlas,hip hop,confident,0.78,96,0.58,0.88,0.12,77,1990,gritty|rebellious|confident,0.00,0.46,en
+13,Dust Road Home,Hollow Pines,country,nostalgic,0.55,104,0.66,0.60,0.72,44,1990,nostalgic|warm|sentimental,0.01,0.04,en
+14,Moonlit Sonata,Elara Voss,classical,melancholy,0.22,66,0.24,0.28,0.95,47,1970,melancholic|solemn|sentimental,0.97,0.03,instrumental
+15,Iron Tide,Black Harbor,metal,angry,0.97,168,0.20,0.45,0.04,39,1980,aggressive|dark|gritty,0.12,0.09,en
+16,Pulse Garden,Kinetic Bloom,edm,euphoric,0.92,128,0.88,0.93,0.06,85,2010,euphoric|energetic|bright,0.72,0.06,instrumental
+17,Island Breeze,Sol Rivera,reggae,uplifting,0.58,82,0.86,0.82,0.45,69,1980,sunny|uplifting|warm,0.05,0.15,es
+18,Paper Boats,Willow & Ash,folk,wistful,0.33,88,0.38,0.47,0.91,22,1970,melancholic|warm|sentimental,0.08,0.03,en
+19,Sabor de Noche,Marisol Vega,latin,playful,0.80,100,0.90,0.91,0.25,74,2000,playful|sunny|energetic,0.02,0.07,es
+20,Hazy Static,Glass Orchard,shoegaze,dreamy,0.52,96,0.45,0.40,0.15,31,1990,dreamy|nostalgic|spacey,0.40,0.04,en

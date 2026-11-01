@@ -20,17 +20,19 @@ It does not predict what a person will click or replay. It only matches a stated
 ## 3. Data Used
 
 - **Size:** 20 songs in `data/songs.csv`. The first 10 came with the project. I added the other 10.
-- **Columns:** id, title, artist, genre, mood, energy, tempo, valence, danceability, acousticness.
+- **Columns:** id, title, artist, genre, mood, energy, tempo, valence, danceability, acousticness, plus six extension columns I added in Challenge 1: popularity, release_decade, mood_tags, instrumentalness, speechiness, language.
 - **Variety:** 17 genres and 16 moods. Most appear only once. Lofi and chill each have 3 songs.
-- **Used in scoring:** energy, mood, valence, and genre.
+- **Used in the base score:** energy, mood, valence, and genre. The six extension columns are scored only when a profile asks for them (see section 4).
 - **Not used:** tempo, danceability, and acousticness. They move almost in step with energy, so they would count the same signal twice.
 
 **Limits.**
 
 - The catalog is tiny.
-- The 10 songs I added have invented numbers, written with AI help. They are guesses, not measurements.
+- The base numbers of the 10 songs I added are invented, written with AI help. They are guesses, not measurements.
+- The extension columns (popularity, release_decade, mood_tags, instrumentalness, speechiness, language) are invented for all 20 songs, also written with AI help. The language value "instrumental" is a pseudo-value that overlaps with instrumentalness, and a few tags differ from the mood labels in spelling (for example the tag "melancholic" and the mood "melancholy"). I left these as they are.
+- The song values in the CSV are not validated: text in a numeric column crashes the scorer, and a NaN or out-of-range number gives odd output.
 - Energy only covers 0.22 to 0.97. Only 2 songs are below 0.30. No song sits between 0.58 and 0.75.
-- There are no lyrics, no language, no release years, and no listening history.
+- There are no lyrics text and no listening history. The catalog has only my invented `language` and `release_decade` values, not real ones.
 
 ---
 
@@ -38,7 +40,7 @@ It does not predict what a person will click or replay. It only matches a stated
 
 VibeCheck is like a judge with a checklist. It scores every song. Then it shows the five best.
 
-Each song can earn up to 8 points:
+Each song can earn up to 8 points from the base terms:
 
 - **Energy: up to 4 points.** The closer a song's energy is to what you want, the more points it gets. A little off loses a little. Far off loses a lot.
 - **Mood: up to 2 points.** An exact match gets 2. A close mood gets 1. For example, "playful" is close to "happy". "Relaxed" is close to "chill".
@@ -48,6 +50,8 @@ Each song can earn up to 8 points:
 Genre is worth less than mood on purpose. Most genres have only one song here. A genre tag alone should not beat a song that fits your mood and energy.
 
 After scoring, the songs are sorted from highest to lowest. The top five are shown. If two songs tie, the one with energy closer to your target goes first. Each pick comes with the points it earned, so you can see why it was chosen.
+
+**Optional extension terms.** A profile can also ask for mood tags, a decade, popularity, instrumentalness, speechiness, or a language. Each term is added only when the profile has that key, and together they add up to at most 5 points: tags up to 1.5, decade up to 1, popularity up to 1, instrumentalness up to 0.5, speechiness up to 0.5, language 0.5. A profile without these keys scores exactly as described above, so the maximum stays 8 for base profiles and is up to 13 when every extension key is used. There are four ready-made extension profiles (`ext-90s-nostalgia`, `ext-hidden-gems`, `ext-instrumental-focus`, `ext-chart-hits`). They are separate from the 10-profile evaluation below, which is still accurate for the base set.
 
 The starter code only returned the first few songs and ignored the user. This version scores every song, rewards closeness, gives partial credit for close moods, and explains each result. It runs in the terminal only.
 
@@ -86,7 +90,7 @@ The starter code only returned the first few songs and ignored the user. This ve
 - **Comparisons.** I compared profiles in 12 pairs and wrote down what changed and why.
 - **One experiment.** I doubled the energy weight and halved the genre weight. The #1 song stayed the same for all 10 profiles. Below #1, one list got clearly better and two got a little worse. I put the weights back.
 - **A trace.** I worked out, term by term, why Pulse Garden ranks first for "high-energy pop".
-- **Tests.** Eleven automated tests pass. They cover the `Recommender` class (including a test with the songs in reverse order and a check that it matches the function-based version on the real catalog) and the input cleaning. They do not check exact scores. I checked the scoring by running profiles and reading the results.
+- **Tests.** 45 automated test cases pass (counting each parametrized case). They cover the `Recommender` class (including a test with the songs in reverse order and a check that it matches the function-based version on the real catalog), the input cleaning, and the extension attributes. The original tests do not check exact scores. The extension tests do check hand-computed values for each new term. I checked the base scoring by running profiles and reading the results.
 
 The full terminal output for every profile is in the README, under "Stress test: diverse profiles". The details are below.
 
@@ -168,7 +172,7 @@ The profiles are testing what I meant them to: energy separates the listeners mo
 
 ## 8. Ideas for Improvement
 
-1. **Say when the match is weak.** Warn the user when no song matches their labels or the best score is low. (Input cleaning is already done: capital letters and extra spaces are ignored, numbers are kept between 0 and 1, and bad input gives a clear error.)
+1. **Say when the match is weak.** Warn the user when no song matches their labels or the best score is low. (Input cleaning is already done: capital letters and extra spaces are ignored, numbers are kept inside their range, and bad input gives a clear error. Blank extension values count as "not given".)
 2. **Match labels more softly.** Add more groups of close moods. Treat related genres, like pop and indie pop, as close. Let a profile list several favorites and a few dislikes.
 3. **Use a bigger, more varied catalog.** Add more songs per genre and more quiet and mid-range songs. Then test different energy weights again. Add a rule so the top five are not all alike.
 
@@ -188,7 +192,7 @@ I still had to double-check it often:
 
 - The common starting weights (genre 2, mood 1) looked fine. A simulation showed an intense gym song beating a happy indie-pop song for a happy pop listener.
 - The starter tests passed while two methods were empty stubs. They only passed because of list order. A green test does not mean the work is done.
-- The 10 songs I added have numbers the AI invented. They are guesses, so I said so in the model card.
+- The 10 songs I added have numbers the AI invented, and so do the six extension columns for all 20 songs. They are guesses, so I said so in the model card.
 - The docs went out of date after almost every change. I had to re-check numbers and claims each time.
 - Sub-agent reports were second opinions. I re-ran their numbers before I used them.
 
