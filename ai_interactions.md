@@ -138,7 +138,7 @@ The challenge was "Diversity and Fairness Logic": stop the top results from fill
 - Agent B reviewed A's work, read-only, and wrote its own version to compare.
 - Agent C fixed B's findings and updated the docs and this log.
 
-I prototyped the work on a branch called `challenge-3-diversity`. I have not merged it yet.
+I prototyped the work on a branch called `challenge-3-diversity`. After the checks passed, I merged it into `main`.
 
 **Prompts used:**
 
