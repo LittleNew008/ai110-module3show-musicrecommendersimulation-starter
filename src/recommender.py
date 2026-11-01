@@ -2,6 +2,8 @@ import csv
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field, asdict
 import math
+import numbers
+import operator
 import re
 
 # Algorithm Recipe weights for the default (balanced) mode (base maximum score is 8.0)
@@ -21,6 +23,11 @@ POPULARITY_WEIGHT = 1.0
 INSTRUMENTALNESS_WEIGHT = 0.5
 SPEECHINESS_WEIGHT = 0.5
 LANGUAGE_WEIGHT = 0.5
+
+# Diversity penalties (opt-in): points taken off a candidate for each song already picked
+# with the same artist / the same genre. These are the sizes the CLI's --diverse flag uses.
+ARTIST_PENALTY = 1.0
+GENRE_PENALTY = 0.5
 
 @dataclass(frozen=True)
 class ScoringMode:
@@ -131,9 +138,11 @@ class Recommender:
     OOP implementation of the recommendation logic.
     Required by tests/test_recommender.py
     """
-    def __init__(self, songs: List[Song], mode=None):
+    def __init__(self, songs: List[Song], mode=None, artist_penalty: float = 0.0, genre_penalty: float = 0.0):
         self.songs = songs
         self.mode = resolve_mode(mode)
+        self.artist_penalty = check_penalty("artist_penalty", artist_penalty)
+        self.genre_penalty = check_penalty("genre_penalty", genre_penalty)
 
     @staticmethod
     def _prefs(user: UserProfile) -> Dict:
@@ -154,7 +163,7 @@ class Recommender:
         """Return the top k songs for the user, best first, reusing recommend_songs."""
         by_id = {song.id: song for song in self.songs}
         rows = [asdict(song) for song in self.songs]
-        ranked = recommend_songs(self._prefs(user), rows, k, self.mode)
+        ranked = recommend_songs(self._prefs(user), rows, k, self.mode, self.artist_penalty, self.genre_penalty)
         return [by_id[row["id"]] for row, _, _ in ranked]
 
     def explain_recommendation(self, user: UserProfile, song: Song) -> str:
@@ -343,12 +352,74 @@ def score_song(user_prefs: Dict, song: Dict, mode=None) -> Tuple[float, List[str
 
     return score, reasons
 
-def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5, mode=None) -> List[Tuple[Dict, float, str]]:
-    """Score every song and return the top k as (song, score, explanation), best first."""
+def check_penalty(name: str, value) -> float:
+    """Return a diversity penalty as a float; raise ValueError unless it is a finite number >= 0."""
+    ok = not isinstance(value, bool) and isinstance(value, numbers.Real)
+    if ok:
+        try:
+            ok = math.isfinite(value) and value >= 0
+        except OverflowError:  # an int too large for a float
+            ok = False
+    if not ok:
+        raise ValueError(f"{name} must be a finite number >= 0, got {value!r}")
+    return float(value)
+
+def check_k(k) -> int:
+    """Return k as an int (negative counts as 0); raise ValueError unless it is a whole number."""
+    try:
+        if isinstance(k, bool):
+            raise TypeError
+        k = operator.index(k)
+    except TypeError:
+        raise ValueError(f"k must be a whole number, got {k!r}") from None
+    return max(k, 0)
+
+def pick_diverse(scored: List[Tuple[Dict, float, List[str]]], k: int, target_energy: Optional[float],
+                 artist_penalty: float, genre_penalty: float) -> List[Tuple[Dict, float, List[str]]]:
+    """Greedily pick k songs, charging each candidate for same-artist and same-genre songs already picked."""
+    remaining = list(scored)
+    picked: List[Tuple[Dict, float, List[str]]] = []
+    while remaining and len(picked) < k:
+        best = None
+        for index, (song, score, reasons) in enumerate(remaining):
+            # A missing (None) artist or genre never counts as a repeat
+            artist, genre = song.get("artist"), song.get("genre")
+            n_artist = 0 if artist is None else sum(p.get("artist") == artist for p, _, _ in picked)
+            n_genre = 0 if genre is None else sum(p.get("genre") == genre for p, _, _ in picked)
+            adjusted = score - artist_penalty * n_artist - genre_penalty * n_genre
+            energy_gap = 0.0 if target_energy is None else abs(song["energy"] - target_energy)
+            key = (-adjusted, energy_gap, song["title"])
+            if best is None or key < best[0]:
+                best = (key, index, adjusted, n_artist, n_genre)
+        _, index, adjusted, n_artist, n_genre = best
+        song, _, reasons = remaining.pop(index)
+        extra = []
+        if artist_penalty > 0 and n_artist:
+            extra += [f"diversity penalty: artist {song['artist']} already recommended (-{artist_penalty:.2f})"] * n_artist
+        if genre_penalty > 0 and n_genre:
+            extra += [f"diversity penalty: genre {song['genre']} already recommended (-{genre_penalty:.2f})"] * n_genre
+        picked.append((song, adjusted, reasons + extra))
+    return picked
+
+def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5, mode=None,
+                    artist_penalty: float = 0.0, genre_penalty: float = 0.0) -> List[Tuple[Dict, float, str]]:
+    """Score every song and return the top k as (song, score, explanation), best first.
+
+    With a nonzero artist_penalty or genre_penalty the list is built greedily and each pick's score
+    is its adjusted score (see pick_diverse); with both at 0 the plain ranking is returned.
+    k must be a whole number; a k of 0 or less returns an empty list.
+    """
     mode = resolve_mode(mode)
+    artist_penalty = check_penalty("artist_penalty", artist_penalty)
+    genre_penalty = check_penalty("genre_penalty", genre_penalty)
+    k = check_k(k)
     prefs = clean_prefs(user_prefs)
     scored = [(song, *score_song(prefs, song, mode)) for song in songs]
     target_energy = prefs.get("energy")
+
+    if artist_penalty > 0 or genre_penalty > 0:
+        picked = pick_diverse(scored, k, target_energy, artist_penalty, genre_penalty)
+        return [(song, score, "; ".join(reasons)) for song, score, reasons in picked]
 
     def rank_key(item):
         song, score, _ = item

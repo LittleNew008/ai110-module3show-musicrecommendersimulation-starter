@@ -128,6 +128,49 @@ I prototyped the work on a branch called `experiment/scoring-modes`. After the c
 
 ---
 
+## Challenge 3: Diversity and Fairness Logic
+
+**What task did you give the agent?**
+
+The challenge was "Diversity and Fairness Logic": stop the top results from filling up with the same artist or genre. I used the same three agent roles as before and did the git work and the checks myself:
+
+- Agent A built it.
+- Agent B reviewed A's work, read-only, and wrote its own version to compare.
+- Agent C fixed B's findings and updated the docs and this log.
+
+I prototyped the work on a branch called `challenge-3-diversity`. I have not merged it yet.
+
+**Prompts used:**
+
+- To Agent A (shortened): "Add an optional diversity penalty. Build the top k greedily. For each next pick, its adjusted score is its normal score minus 1.0 per earlier pick by the same artist and minus 0.5 per earlier pick in the same genre. Report the adjusted score, and add a reason line for each penalty. With the penalty off, the output must be byte-for-byte identical to today's."
+- Shared rule for all agents (same as before): "Default behavior must stay exactly the same. A regression guard compares the top 5 and the scores of the original 10 profiles and the CLI output of `all` and `adversarial` against saved files. New options are extras. Do not run git add, commit, or reset."
+- To Agent B (shortened): "Review A's work read-only. Write your own version from the rule and compare. Check old against new on the default path. Run mutations on a copy of the repo."
+- To Agent C (shortened): "Make a negative `k` return an empty list on both paths. Validate `k` once at the top of `recommend_songs`: whole numbers only, and reject floats, None, strings and booleans with a clear `ValueError`. Make a huge integer penalty raise the same `ValueError` as other bad penalties. A song with no artist must not crash, and a missing artist or genre must not count as 'the same'. Wrap the long import line. Run at least 5 mutations on a copy. Then update the README, the model card and this log."
+
+**What did the agent generate or change?**
+
+- `src/recommender.py`: two constants (`ARTIST_PENALTY = 1.0`, `GENRE_PENALTY = 0.5`), the helpers `check_penalty` and `pick_diverse`, and optional `artist_penalty` and `genre_penalty` arguments on `recommend_songs` and `Recommender`. Both are 0 by default, and then the old plain ranking runs.
+- `src/main.py`: a `--diverse` flag that turns on both default sizes and adds one header line.
+- `tests/test_recommender.py`: 460 new test cases from Agent A (577 in total), then 33 more from Agent C (610 in total, in 95 test functions, by `pytest --collect-only -q`).
+- Agent C added `check_k` and the None handling in `pick_diverse`.
+- `README.md` (new Challenge 3 subsection, flow diagram, run commands, test counts), `model_card.md`, and this file.
+
+**What did you verify or fix manually?**
+
+- **Guard and tests.** I re-ran the regression guard and `pytest` myself after each stage. Default output of the original 10 profiles is unchanged.
+- **My hand check.** Library Rain scores 7.92 in the plain list. It comes second after a lofi song, so I checked that 7.92 - 0.50 = 7.42 matches the diverse output. It does.
+- **Agent B's checks.** B wrote an independent version, and it matched A's on 1680 cases (14 profiles, 4 modes, 6 penalty pairs, 5 values of `k`). B compared the old and new code on the default path in 24,000 cases, and all were identical. B ran 2352 property cases, and they passed. B ran 35 mutations on a copy, and 34 were killed. The survivor was the negative-`k` change, which I had already agreed to make.
+- **A's demo numbers.** I reproduced all of them: 5 of 14 lists change at the default sizes, average distinct artists 4.71 to 4.93, average distinct genres 4.36 to 4.57, and 8 of 14 lists change at 100 / 100.
+- **Negative `k`.** On the plain path, `k=-1` returned 19 songs, because the slice `ranked[:k]` counts from the end. I decided that both paths return an empty list for `k` of 0 or less. This is a small change from the old behavior, and I wrote it in the README.
+- **Non-whole `k`.** B found that `k=None`, `k=2.5` and `k="3"` behaved differently on the two paths. Agent C now validates `k` once at the top of `recommend_songs`. Only whole numbers pass. Floats, None, strings and booleans raise a `ValueError`.
+- **Overflow.** `check_penalty("p", 2**2000)` raised an `OverflowError`. It now raises the same `ValueError` as every other bad penalty.
+- **Missing artist.** A song without an `artist` key raised a `KeyError`, but only when diversity was on. A None artist or genre was also treated as equal to another None. Now missing values never count as repeats. While fixing this, a first try still failed, because the penalty text was built even when there was no repeat. A test caught it, and Agent C fixed it.
+- **Mutations.** Agent C ran 10 mutations on a copy of the repo (never the real one): no `k` validation, no negative-`k` clamp, a raw negative `k` slice, booleans accepted, floats truncated, None artist equal, None genre equal, missing artist raising, overflow handling removed, and penalty text built with no repeat. The suite caught all 10.
+- **Skipped on purpose.** I did not normalize artist or genre text, so "Neon Echo" and "neon echo " count as different. I did not scale the penalties for extension profiles, whose scores run from 10 to 11, so they are relatively weak there. I did not make `Recommender.explain_recommendation` show penalty lines. It explains a song's own fit, so it can disagree with the adjusted score in the CLI. I wrote all three in the README.
+- **Docs.** I searched README.md and model_card.md for old test counts ("117", "61 test functions"), the "sorted from highest to lowest" sentence, and the flow description. I used the real counts and said that the diversity step is optional.
+
+---
+
 ## Design Pattern (SF10)
 
 > Document how AI helped you choose or implement a design pattern.

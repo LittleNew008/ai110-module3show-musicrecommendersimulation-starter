@@ -51,7 +51,7 @@ In the default (balanced) mode, each song can earn up to 8 points from the base 
 
 Genre is worth less than mood on purpose. Most genres have only one song here. A genre tag alone should not beat a song that fits your mood and energy.
 
-After scoring, the songs are sorted from highest to lowest. The top five are shown. If two songs tie, the one with energy closer to your target goes first. Each pick comes with the points it earned, so you can see why it was chosen.
+After scoring, the songs are sorted from highest to lowest. The top five are shown. (There is an optional diversity re-ranking, off by default. It picks the list one song at a time and takes 1.0 point off a song for each earlier pick by the same artist and 0.5 for the same genre. Turn it on with `--diverse`. Every result in this card used the plain sort.) If two songs tie, the one with energy closer to your target goes first. Each pick comes with the points it earned, so you can see why it was chosen.
 
 **Optional extension terms.** A profile can also ask for mood tags, a decade, popularity, instrumentalness, speechiness, or a language. Each term is added only when the profile has that key, and together they add up to at most 5 points: tags up to 1.5, decade up to 1, popularity up to 1, instrumentalness up to 0.5, speechiness up to 0.5, language 0.5. A profile without these keys scores exactly as described above, so the maximum stays 8 for base profiles and is up to 13 when every extension key is used. There are four ready-made extension profiles (`ext-90s-nostalgia`, `ext-hidden-gems`, `ext-instrumental-focus`, `ext-chart-hits`). They are separate from the 10-profile evaluation below, which is still accurate for the base set.
 
@@ -68,6 +68,7 @@ The starter code only returned the first few songs and ignored the user. This ve
 - When no song is close, the mood and genre labels decide the order.
 - In my "energy 0.0, pop, happy" test, the loud, bright Sunrise City (energy 0.82) ranked #2 only because its labels matched.
 - The top five still looked confident. Nothing warned that the system had little to choose from.
+- The optional diversity penalty has a small effect here. Only two artists and two genres repeat in the catalog, so it changed 5 of 14 top-five lists. It can also drop a more relevant song for variety. For lofi/chill it swapped Focus Flow (6.99) for Hazy Static (5.41). It is a variety rule, not a fairness fix.
 
 **Other patterns I saw.**
 
@@ -92,7 +93,7 @@ The starter code only returned the first few songs and ignored the user. This ve
 - **Comparisons.** I compared profiles in 12 pairs and wrote down what changed and why.
 - **One experiment.** I doubled the energy weight and halved the genre weight. The #1 song stayed the same for all 10 profiles. Below #1, one list got clearly better and two got a little worse. I put the weights back.
 - **A trace.** I worked out, term by term, why Pulse Garden ranks first for "high-energy pop".
-- **Tests.** 117 automated test cases pass (61 test functions, counting each parametrized case). They cover the `Recommender` class (including a test with the songs in reverse order and a check that it matches the function-based version on the real catalog), the input cleaning, the extension attributes, and the scoring modes. The original tests do not check exact scores. The extension tests do check hand-computed values for each new term, and the mode tests pin every weight. I checked the base scoring by running profiles and reading the results.
+- **Tests.** 610 automated test cases pass (95 test functions, counting each parametrized case). They cover the `Recommender` class (including a test with the songs in reverse order and a check that it matches the function-based version on the real catalog), the input cleaning, the extension attributes, the scoring modes, and the diversity penalty. The original tests do not check exact scores. The extension tests do check hand-computed values for each new term, and the mode tests pin every weight. I checked the base scoring by running profiles and reading the results.
 
 The full terminal output for every profile is in the README, under "Stress test: diverse profiles". The details are below.
 

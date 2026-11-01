@@ -1,3 +1,4 @@
+import math
 import subprocess
 import sys
 from dataclasses import asdict
@@ -8,8 +9,8 @@ import pytest
 from src import recommender
 from src.main import ADVERSARIAL_PROFILES, EXTENSION_PROFILES, PROFILES
 from src.recommender import (
-    MODES, ScoringMode, Song, UserProfile, Recommender, clean_prefs, load_songs, recommend_songs,
-    resolve_mode, score_song,
+    ARTIST_PENALTY, GENRE_PENALTY, MODES, ScoringMode, Song, UserProfile, Recommender, check_penalty, clean_prefs,
+    load_songs, recommend_songs, resolve_mode, score_song,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -737,3 +738,370 @@ def test_scoring_mode_rejects_bad_numbers(bad):
 def test_scoring_mode_accepts_zero_weights_and_the_credit_limits():
     ScoringMode("zeros", "x", 0.0, 0.0, 0.0, 0.0, partial_mood_credit=0.0)
     ScoringMode("full", "x", 1.0, 1.0, 1.0, 1.0, partial_mood_credit=1.0)
+
+
+# --- Diversity penalty ---
+
+ALL_PROFILES = {**BASE_PROFILES, **EXTENSION_PROFILES}
+
+
+def diverse_song(id, title, artist, genre, energy=0.5, mood="happy"):
+    return {"id": id, "title": title, "artist": artist, "genre": genre, "mood": mood, "energy": energy,
+            "tempo_bpm": 100.0, "valence": 0.5, "danceability": 0.5, "acousticness": 0.5}
+
+
+# Mood is the only scored term, so base scores are exact: 2.0 for "happy", 1.0 for "playful" (same cluster)
+MOOD_ONLY = ScoringMode("mood-only", "mood only", 0.0, 2.0, 0.0, 0.0)
+MOOD_PREFS = {"energy": 0.5, "mood": "happy"}
+
+
+def test_diversity_constants_are_the_documented_defaults():
+    assert (ARTIST_PENALTY, GENRE_PENALTY) == (1.0, 0.5)
+
+
+@pytest.mark.parametrize("name", list(ALL_PROFILES))
+@pytest.mark.parametrize("mode", list(MODES))
+def test_zero_penalties_equal_todays_result_on_every_profile_and_mode(name, mode):
+    rows = load_songs("data/songs.csv")
+    plain = recommend_songs(ALL_PROFILES[name], rows, k=20, mode=mode)
+
+    assert recommend_songs(ALL_PROFILES[name], rows, 20, mode, 0.0, 0.0) == plain
+    assert recommend_songs(ALL_PROFILES[name], rows, 20, mode, artist_penalty=0, genre_penalty=0) == plain
+    assert recommend_songs(ALL_PROFILES[name], rows, 5, mode, 0, 0) == plain[:5]
+    assert not any("diversity" in explanation for _, _, explanation in plain)
+
+
+@pytest.mark.parametrize("name", list(ALL_PROFILES))
+@pytest.mark.parametrize("mode", list(MODES))
+def test_every_pick_is_its_base_score_minus_one_penalty_per_earlier_repeat(name, mode):
+    prefs = ALL_PROFILES[name]
+    rows = load_songs("data/songs.csv")
+    ranked = recommend_songs(prefs, rows, 20, mode, ARTIST_PENALTY, GENRE_PENALTY)
+
+    assert len(ranked) == len(rows) and len({song["id"] for song, _, _ in ranked}) == len(rows)
+    for position, (song, score, explanation) in enumerate(ranked):
+        earlier = [other for other, _, _ in ranked[:position]]
+        same_artist = sum(other["artist"] == song["artist"] for other in earlier)
+        same_genre = sum(other["genre"] == song["genre"] for other in earlier)
+        base, reasons = score_song(prefs, song, mode)
+        assert score == pytest.approx(base - ARTIST_PENALTY * same_artist - GENRE_PENALTY * same_genre)
+        assert explanation.split("; ")[:len(reasons)] == reasons
+        assert explanation.count("diversity penalty: artist") == same_artist
+        assert explanation.count("diversity penalty: genre") == same_genre
+
+
+@pytest.mark.parametrize("name", list(ALL_PROFILES))
+@pytest.mark.parametrize("mode", list(MODES))
+@pytest.mark.parametrize("penalties", [(ARTIST_PENALTY, GENRE_PENALTY), (100, 100), (0.0, 0.3), (2.5, 0.0)])
+def test_reported_scores_never_increase_down_the_list(name, mode, penalties):
+    rows = load_songs("data/songs.csv")
+    scores = [score for _, score, _ in recommend_songs(ALL_PROFILES[name], rows, 20, mode, *penalties)]
+
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_first_pick_is_unchanged_and_unpenalized():
+    rows = load_songs("data/songs.csv")
+    for name, prefs in ALL_PROFILES.items():
+        plain = recommend_songs(prefs, rows, 1)
+        assert recommend_songs(prefs, rows, 1, None, ARTIST_PENALTY, GENRE_PENALTY) == plain, name
+
+
+def test_an_artist_repeat_loses_exactly_the_artist_penalty_per_earlier_song():
+    songs = [diverse_song(1, "A1", "Neon Echo", "pop"), diverse_song(2, "A2", "Neon Echo", "rock"),
+             diverse_song(3, "A3", "Neon Echo", "jazz"), diverse_song(4, "B1", "Other", "folk", mood="playful")]
+    ranked = recommend_songs(MOOD_PREFS, songs, 4, MOOD_ONLY, artist_penalty=0.4)
+    by_title = {song["title"]: (score, explanation) for song, score, explanation in ranked}
+
+    assert by_title["A1"][0] == pytest.approx(2.0) and "diversity" not in by_title["A1"][1]
+    assert by_title["A2"][0] == pytest.approx(1.6)
+    assert by_title["A2"][1].endswith("diversity penalty: artist Neon Echo already recommended (-0.40)")
+    assert by_title["A3"][0] == pytest.approx(1.2)
+    assert by_title["A3"][1].count("diversity penalty: artist Neon Echo already recommended (-0.40)") == 2
+    assert "diversity penalty: genre" not in by_title["A3"][1]
+
+
+def test_a_genre_repeat_loses_exactly_the_genre_penalty_per_earlier_song():
+    songs = [diverse_song(1, "A1", "One", "lofi"), diverse_song(2, "A2", "Two", "lofi"),
+             diverse_song(3, "A3", "Three", "lofi"), diverse_song(4, "B1", "Four", "folk", mood="playful")]
+    ranked = recommend_songs(MOOD_PREFS, songs, 4, MOOD_ONLY, genre_penalty=0.3)
+    by_title = {song["title"]: (score, explanation) for song, score, explanation in ranked}
+
+    assert by_title["A1"][0] == pytest.approx(2.0) and "diversity" not in by_title["A1"][1]
+    assert by_title["A2"][0] == pytest.approx(1.7)
+    assert by_title["A2"][1].endswith("diversity penalty: genre lofi already recommended (-0.30)")
+    assert by_title["A3"][0] == pytest.approx(1.4)
+    assert by_title["A3"][1].count("diversity penalty: genre lofi already recommended (-0.30)") == 2
+    assert "diversity penalty: artist" not in by_title["A3"][1]
+
+
+def test_artist_and_genre_penalties_stack_with_their_default_sizes():
+    songs = [diverse_song(1, "First", "Neon Echo", "lofi", energy=0.5),
+             diverse_song(2, "Second", "Neon Echo", "lofi", energy=0.6)]
+    ranked = recommend_songs(MOOD_PREFS, songs, 2, MOOD_ONLY, ARTIST_PENALTY, GENRE_PENALTY)
+
+    assert [song["title"] for song, _, _ in ranked] == ["First", "Second"]
+    assert ranked[1][1] == pytest.approx(2.0 - 1.0 - 0.5)
+    assert ranked[1][2].split("; ")[-2:] == [
+        "diversity penalty: artist Neon Echo already recommended (-1.00)",
+        "diversity penalty: genre lofi already recommended (-0.50)",
+    ]
+
+
+def test_a_song_with_no_repeated_artist_or_genre_gets_no_penalty_reason():
+    songs = [diverse_song(1, "One", "A", "pop"), diverse_song(2, "Two", "B", "rock"), diverse_song(3, "Three", "C", "jazz")]
+    ranked = recommend_songs(MOOD_PREFS, songs, 3, MOOD_ONLY, ARTIST_PENALTY, GENRE_PENALTY)
+
+    assert [score for _, score, _ in ranked] == [2.0, 2.0, 2.0]
+    assert all("diversity" not in explanation for _, _, explanation in ranked)
+    assert ranked == recommend_songs(MOOD_PREFS, songs, 3, MOOD_ONLY)
+
+
+def test_a_penalty_can_reorder_the_list_and_the_dropped_song_comes_back_later():
+    songs = [diverse_song(1, "Top", "Neon Echo", "pop", energy=0.5),
+             diverse_song(2, "Twin", "Neon Echo", "rock", energy=0.5001),
+             diverse_song(3, "Fresh", "Other", "jazz", mood="playful")]
+
+    assert [s["title"] for s, _, _ in recommend_songs(MOOD_PREFS, songs, 3, MOOD_ONLY)] == ["Top", "Twin", "Fresh"]
+    ranked = recommend_songs(MOOD_PREFS, songs, 3, MOOD_ONLY, artist_penalty=1.5)
+    assert [s["title"] for s, _, _ in ranked] == ["Top", "Fresh", "Twin"]
+    assert [score for _, score, _ in ranked] == pytest.approx([2.0, 1.0, 0.5])
+
+
+@pytest.mark.parametrize("mode", list(MODES))
+@pytest.mark.parametrize("name", list(ALL_PROFILES))
+def test_a_huge_artist_penalty_gives_five_different_artists(name, mode):
+    rows = load_songs("data/songs.csv")
+    assert len({song["artist"] for song in rows}) >= 5
+    top = [song["artist"] for song, _, _ in recommend_songs(ALL_PROFILES[name], rows, 5, mode, artist_penalty=100)]
+
+    assert len(set(top)) == 5
+
+
+@pytest.mark.parametrize("name", list(ALL_PROFILES))
+def test_a_huge_genre_penalty_gives_five_different_genres(name):
+    rows = load_songs("data/songs.csv")
+    top = [song["genre"] for song, _, _ in recommend_songs(ALL_PROFILES[name], rows, 5, None, genre_penalty=100)]
+
+    assert len(set(top)) == 5
+
+
+def test_ties_on_adjusted_score_go_to_the_smaller_energy_gap_then_the_title():
+    songs = [
+        diverse_song(1, "Lead", "X", "g1", energy=0.5),                        # 2.0, picked first
+        diverse_song(2, "Aaa", "X", "g2", energy=0.8),                         # 2.0 - 1.0 = 1.0, gap 0.3
+        diverse_song(3, "Zed", "Y", "g1", energy=0.4),                         # 2.0 - 1.0 = 1.0, gap 0.1
+        diverse_song(4, "Alpha", "Z", "g3", energy=0.6, mood="playful"),       # 1.0, gap 0.1
+    ]
+    # on base scores the three 2.0 songs would rank Lead, Zed, Aaa and "playful" would be last
+    assert [s["title"] for s, _, _ in recommend_songs(MOOD_PREFS, songs, 4, MOOD_ONLY)] == ["Lead", "Zed", "Aaa", "Alpha"]
+
+    ranked = recommend_songs(MOOD_PREFS, songs, 4, MOOD_ONLY, 1.0, 1.0)
+    assert [score for _, score, _ in ranked] == pytest.approx([2.0, 1.0, 1.0, 1.0])
+    assert [s["title"] for s, _, _ in ranked] == ["Lead", "Alpha", "Zed", "Aaa"]  # gap 0.1 (title Alpha < Zed), then gap 0.3
+
+
+def test_ties_without_an_energy_target_fall_back_to_the_title():
+    songs = [diverse_song(1, "Lead", "X", "g1"), diverse_song(2, "Beta", "X", "g2"), diverse_song(3, "Alpha", "Y", "g3")]
+    ranked = recommend_songs({"mood": "happy"}, songs, 3, MOOD_ONLY, artist_penalty=1.0)
+
+    assert [s["title"] for s, _, _ in ranked] == ["Alpha", "Beta", "Lead"]  # all tie at 2.0, so Alpha then Beta by title; Lead is then charged for Beta
+    assert [score for _, score, _ in ranked] == pytest.approx([2.0, 2.0, 1.0])
+
+
+def test_k_edge_cases_with_diversity_on():
+    rows = load_songs("data/songs.csv")
+    prefs = PROFILES["lofi/chill"]
+    full = recommend_songs(prefs, rows, 20, None, ARTIST_PENALTY, GENRE_PENALTY)
+
+    for bad_k in (0, -1, -20):
+        assert recommend_songs(prefs, rows, bad_k, None, ARTIST_PENALTY, GENRE_PENALTY) == []
+    assert recommend_songs(prefs, rows, 100, None, ARTIST_PENALTY, GENRE_PENALTY) == full and len(full) == len(rows)
+    assert recommend_songs(prefs, rows, 5, None, ARTIST_PENALTY, GENRE_PENALTY) == full[:5]
+    assert recommend_songs(prefs, [], 5, None, ARTIST_PENALTY, GENRE_PENALTY) == []
+
+
+@pytest.mark.parametrize("keyword", ["artist_penalty", "genre_penalty"])
+@pytest.mark.parametrize("bad", [-0.1, -1, math.nan, math.inf, -math.inf, True, False, "1.0", None, [1.0]])
+def test_bad_penalties_raise_a_clear_value_error(keyword, bad):
+    rows = load_songs("data/songs.csv")
+
+    with pytest.raises(ValueError, match=f"{keyword} must be a finite number >= 0"):
+        recommend_songs(BASE_PROFILES["pop/happy"], rows, 5, **{keyword: bad})
+    with pytest.raises(ValueError, match=keyword):
+        Recommender([Song(**row) for row in rows], **{keyword: bad})
+
+
+def test_integer_and_zero_penalties_are_accepted():
+    rows = load_songs("data/songs.csv")
+
+    assert recommend_songs(BASE_PROFILES["pop/happy"], rows, 5, artist_penalty=1, genre_penalty=0)
+
+
+@pytest.mark.parametrize("mode", list(MODES))
+@pytest.mark.parametrize("name", ["lofi/chill", "pop/happy", "adv-energy-only", "ext-instrumental-focus"])
+def test_recommender_passes_the_penalties_through_to_recommend(name, mode):
+    rows = load_songs("data/songs.csv")
+    prefs = ALL_PROFILES[name]
+    user = UserProfile(prefs.get("genre"), prefs.get("mood"), prefs.get("energy"), False, prefs.get("valence"),
+                       **{key: prefs[key] for key in ("mood_tags", "instrumentalness", "speechiness", "language") if key in prefs})
+    songs = [Song(**row) for row in rows]
+    rec = Recommender(songs, mode, ARTIST_PENALTY, GENRE_PENALTY)
+    expected = recommend_songs(Recommender._prefs(user), rows, 5, mode, ARTIST_PENALTY, GENRE_PENALTY)
+
+    assert [song.id for song in rec.recommend(user)] == [song["id"] for song, _, _ in expected]
+    assert (rec.artist_penalty, rec.genre_penalty) == (ARTIST_PENALTY, GENRE_PENALTY)
+    plain = Recommender(songs, mode)
+    assert (plain.artist_penalty, plain.genre_penalty) == (0.0, 0.0)
+    assert [s.id for s in plain.recommend(user)] == [s["id"] for s, _, _ in recommend_songs(Recommender._prefs(user), rows, 5, mode)]
+
+
+def test_recommender_explanations_do_not_need_diversity_text():
+    rows = load_songs("data/songs.csv")
+    rec = Recommender([Song(**row) for row in rows], None, ARTIST_PENALTY, GENRE_PENALTY)
+    user = make_user()
+
+    assert "diversity" not in rec.explain_recommendation(user, rec.recommend(user)[0])
+
+
+def test_the_catalog_with_diversity_on_has_a_real_effect_for_lofi_chill():
+    rows = load_songs("data/songs.csv")
+    prefs = PROFILES["lofi/chill"]
+    before = [s["title"] for s, _, _ in recommend_songs(prefs, rows, 5)]
+    after = [s["title"] for s, _, _ in recommend_songs(prefs, rows, 5, None, ARTIST_PENALTY, GENRE_PENALTY)]
+
+    assert before != after and len(set(before)) == len(set(after)) == 5
+
+
+def test_cli_diverse_adds_one_header_line_and_penalty_reasons():
+    plain = run_cli("lofi/chill")
+    result = run_cli("lofi/chill", "--diverse")
+    header = " Diversity: on (artist -1.00, genre -0.50)"
+
+    assert result.returncode == 0 and "Diversity" not in plain.stdout
+    lines = result.stdout.splitlines()
+    plain_lines = plain.stdout.splitlines()
+    assert lines[3] == header and lines[:3] == plain_lines[:3] and lines[4:5] == plain_lines[3:4]  # the Targets line follows
+    assert lines.count(header) == 1
+    assert "diversity penalty: genre lofi already recommended (-0.50)" in result.stdout
+    assert result.stdout != plain.stdout
+
+
+def test_cli_without_diverse_prints_no_diversity_text():
+    for args in (["pop/happy"], ["all"], ["adversarial"], ["extensions"], ["lofi/chill", "--mode", "mood-first"]):
+        result = run_cli(*args)
+        assert result.returncode == 0 and "Diversity" not in result.stdout and "diversity penalty" not in result.stdout
+
+
+def test_cli_diverse_combines_with_modes_and_profile_groups():
+    header = " Diversity: on (artist -1.00, genre -0.50)"
+    result = run_cli("lofi/chill", "--mode", "genre-first", "--diverse")
+
+    assert result.returncode == 0
+    lines = result.stdout.splitlines()
+    assert lines[3] == " Mode: genre-first" and lines[4] == header  # the mode line comes first
+    for group in ("all", "adversarial", "extensions"):
+        grouped = run_cli(group, "--diverse")
+        assert grouped.returncode == 0
+        assert grouped.stdout.count(header) == grouped.stdout.count(" Top 5 recommendations for profile:") > 0
+    for mode in MODES:
+        assert run_cli("all", "--mode", mode, "--diverse").returncode == 0
+
+
+def test_cli_diverse_scores_match_the_library_call():
+    rows = load_songs("data/songs.csv")
+    expected = recommend_songs(PROFILES["lofi/chill"], rows, 5, None, ARTIST_PENALTY, GENRE_PENALTY)
+    out = run_cli("lofi/chill", "--diverse").stdout
+
+    for rank, (song, score, _) in enumerate(expected, start=1):
+        assert f"{rank}. {song['title']} by {song['artist']}" in out
+        assert f"Score: {score:.2f}" in out
+
+
+def test_cli_existing_errors_are_unchanged_with_diverse():
+    result = run_cli("nope", "--diverse")
+
+    assert result.returncode == 1 and result.stderr.startswith("Unknown profile 'nope'")
+    assert run_cli("pop/happy", "--mode", "turbo", "--diverse").returncode == 2
+
+
+# --- Validation of k, huge penalties and missing artist or genre ---
+
+BOTH_PATHS = [{}, {"artist_penalty": ARTIST_PENALTY, "genre_penalty": GENRE_PENALTY}]
+
+
+@pytest.mark.parametrize("penalties", BOTH_PATHS)
+@pytest.mark.parametrize("k", [0, -1, -5])
+def test_k_of_zero_or_less_returns_an_empty_list_on_both_paths(k, penalties):
+    rows = load_songs("data/songs.csv")
+
+    assert recommend_songs(PROFILES["lofi/chill"], rows, k, **penalties) == []
+
+
+@pytest.mark.parametrize("penalties", BOTH_PATHS)
+@pytest.mark.parametrize("bad", [None, 2.5, 3.0, "3", True, False, [3]])
+def test_k_must_be_a_whole_number_on_both_paths(bad, penalties):
+    rows = load_songs("data/songs.csv")
+
+    with pytest.raises(ValueError, match="k must be a whole number"):
+        recommend_songs(PROFILES["lofi/chill"], rows, bad, **penalties)
+
+
+@pytest.mark.parametrize("penalties", BOTH_PATHS)
+def test_integer_like_k_values_are_accepted_on_both_paths(penalties):
+    rows = load_songs("data/songs.csv")
+    prefs = PROFILES["lofi/chill"]
+
+    assert len(recommend_songs(prefs, rows, 3, **penalties)) == 3
+    assert recommend_songs(prefs, rows, 3, **penalties) == recommend_songs(prefs, rows, True * 3, **penalties)
+    assert len(recommend_songs(prefs, rows, 10**30, **penalties)) == len(rows)
+
+
+def test_recommender_rejects_a_bad_k_and_returns_nothing_for_a_negative_k():
+    rows = load_songs("data/songs.csv")
+    user = make_user()
+
+    for rec in (Recommender([Song(**row) for row in rows]),
+                Recommender([Song(**row) for row in rows], None, ARTIST_PENALTY, GENRE_PENALTY)):
+        assert rec.recommend(user, k=-3) == []
+        with pytest.raises(ValueError, match="k must be a whole number"):
+            rec.recommend(user, k=2.5)
+
+
+@pytest.mark.parametrize("keyword", ["artist_penalty", "genre_penalty"])
+@pytest.mark.parametrize("huge", [2**2000, -(2**2000), 10**400])
+def test_a_huge_integer_penalty_raises_value_error_not_overflow_error(keyword, huge):
+    rows = load_songs("data/songs.csv")
+
+    with pytest.raises(ValueError, match=f"{keyword} must be a finite number >= 0"):
+        check_penalty(keyword, huge)
+    with pytest.raises(ValueError, match=keyword):
+        recommend_songs(BASE_PROFILES["pop/happy"], rows, 5, **{keyword: huge})
+
+
+def test_a_large_but_finite_integer_penalty_is_accepted():
+    assert check_penalty("p", 10**300) == 1e300
+
+
+def test_a_song_without_an_artist_key_works_with_diversity_on():
+    songs = [diverse_song(1, "A", "X", "g1"), diverse_song(2, "B", "X", "g2"), diverse_song(3, "C", "Y", "g3")]
+    del songs[1]["artist"]
+    ranked = recommend_songs(MOOD_PREFS, songs, 3, MOOD_ONLY, artist_penalty=1.0)
+
+    assert [score for _, score, _ in ranked] == pytest.approx([2.0, 2.0, 2.0])
+    assert not any("diversity" in explanation for _, _, explanation in ranked)
+
+
+def test_none_artists_and_none_genres_are_never_the_same():
+    songs = [diverse_song(1, "A", None, None), diverse_song(2, "B", None, None), diverse_song(3, "C", "X", "g")]
+    ranked = recommend_songs(MOOD_PREFS, songs, 3, MOOD_ONLY, artist_penalty=5.0, genre_penalty=5.0)
+
+    assert [score for _, score, _ in ranked] == pytest.approx([2.0, 2.0, 2.0])
+    assert not any("diversity" in explanation for _, _, explanation in ranked)
+
+
+def test_a_none_artist_is_not_the_same_as_a_named_artist_but_real_repeats_still_count():
+    songs = [diverse_song(1, "A", "X", "g1"), diverse_song(2, "B", None, "g2"), diverse_song(3, "C", "X", "g3")]
+    ranked = recommend_songs(MOOD_PREFS, songs, 3, MOOD_ONLY, artist_penalty=1.0)
+
+    assert [(s["title"], score) for s, score, _ in ranked] == [("A", 2.0), ("B", 2.0), ("C", 1.0)]

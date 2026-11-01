@@ -57,6 +57,8 @@ flowchart TD
 
     subgraph OUTPUT["OUTPUT: the ranking"]
         SORT["Sort by score, highest first<br/>ties: closer energy, then title"] --> TOPK["Keep top k"]
+        SORT -.-> DIV["Optional diversity re-ranking (off by default)<br/>greedy: repeated artist -1.0, repeated genre -0.5"]
+        DIV -.-> TOPK
         TOPK --> SHOW["Print title, score, and why"]
     end
 
@@ -65,7 +67,7 @@ flowchart TD
     MORE -->|no| SORT
 ```
 
-In code: `main.py` builds the profile and calls `recommend_songs()`, which runs the loop by calling `score_song()` once per song, then sorts and slices the top `k`. Scoring judges a single song in isolation, and ranking is the only step that sees the whole list. The `Recommender` class in `src/recommender.py` wraps the same two functions for the object-style API.
+In code: `main.py` builds the profile and calls `recommend_songs()`, which runs the loop by calling `score_song()` once per song, then sorts and slices the top `k`. (An optional greedy diversity re-ranking can replace the plain sort; see "Challenge 3: Diversity penalty". It is off by default.) Scoring judges a single song in isolation, and ranking is the only step that sees the whole list. The `Recommender` class in `src/recommender.py` wraps the same two functions for the object-style API.
 
 ### Algorithm recipe: scoring and ranking
 
@@ -100,7 +102,7 @@ The default (balanced) base recipe is unchanged. The extension terms (see "Optio
 
 **Not scored:** `likes_acoustic` is stored on the profile but not used in the score. Acousticness correlates -0.91 with energy, so it would mostly double-count energy.
 
-**Ranking rule (the whole list):** score every song, sort by score descending (ties broken by energy closeness, then title), and return the top `k`. Scoring judges one song in isolation, while ranking turns those scores into an ordered list, so the two are kept separate.
+**Ranking rule (the whole list):** score every song, sort by score descending (ties broken by energy closeness, then title), and return the top `k`. Scoring judges one song in isolation, while ranking turns those scores into an ordered list, so the two are kept separate. This is the default. An optional diversity re-ranking (off unless asked for) builds the top `k` greedily and takes points off a song when the same artist or genre is already in the list; see "Challenge 3: Diversity penalty".
 
 ### Biases I expect
 
@@ -144,6 +146,9 @@ python -m src.main --mode MODE         # rank with another scoring mode (see bel
 python -m src.main lofi/chill --mode energy-focused   # a profile plus a mode
 python -m src.main all --mode genre-first             # every everyday profile in one mode
 python -m src.main --list-modes        # show the four scoring modes and exit
+python -m src.main lofi/chill --diverse                  # penalize repeated artists and genres in the top 5
+python -m src.main lofi/chill --diverse --mode mood-first   # diversity plus another scoring mode
+python -m src.main all --diverse                         # every everyday profile with diversity on
 ```
 
 ### Running Tests
@@ -154,7 +159,7 @@ Run the tests with:
 pytest
 ```
 
-There are 117 test cases in `tests/test_recommender.py`, written as 61 test functions (`pytest --collect-only -q` counts parametrized cases separately). They check the `Recommender` class (including a reversed-input test and a match against the function-based version), the input cleaning, the extension attributes (CSV loading, each scoring term with hand-computed values, the `UserProfile` extension fields, and the `extensions` CLI keyword), and the scoring modes (the exact weight table, `ScoringMode` validation, tie-breaking in every mode, and the `--mode` and `--list-modes` flags). A few extension tests check exact scores; the original tests do not.
+There are 610 test cases in `tests/test_recommender.py`, written as 95 test functions (`pytest --collect-only -q` counts parametrized cases separately). They check the `Recommender` class (including a reversed-input test and a match against the function-based version), the input cleaning, the extension attributes (CSV loading, each scoring term with hand-computed values, the `UserProfile` extension fields, and the `extensions` CLI keyword), and the scoring modes (the exact weight table, `ScoringMode` validation, tie-breaking in every mode, and the `--mode` and `--list-modes` flags), and the diversity penalty (the exact score arithmetic, ties, that zero penalties equal the plain result, validation of `k` and of the penalty sizes, missing artists or genres, the `Recommender` pass-through, and the `--diverse` flag). A few extension tests check exact scores; the original tests do not.
 
 ---
 
@@ -932,3 +937,101 @@ Loaded songs: 20
 ```
 
 **A change in the command line.** The command line now uses `argparse`. Normal use works as before. But an unknown flag (such as `--bogus`) or an extra word now exits with code 2 and a usage message. Before, the old code printed an "Unknown profile" message and exited with code 1. This matters for profile names with spaces: write `"high-energy pop"` in quotes. An unquoted `high-energy pop` is now two words, and it is rejected by `argparse`. An unknown profile name on its own still prints the same "Unknown profile" message and exits with code 1.
+
+### Challenge 3: Diversity penalty
+
+**What I added.** An optional re-ranking step that stops the top 5 from filling up with the same artist or the same genre. It is off by default, so the normal output is exactly as before.
+
+**The rule, in plain language.** Build the list one song at a time (greedy). For each next pick, take every song not yet picked and subtract points from its normal score: 1.0 for each earlier pick by the same artist, and 0.5 for each earlier pick in the same genre. Pick the song with the highest adjusted score. Repeat until the list has `k` songs. The score printed next to a song is the adjusted one, and every repeat adds one line to "Why", such as `diversity penalty: genre lofi already recommended (-0.50)`. The first pick is never penalized. Ties still go to the closer energy, then the title.
+
+**The rule I gave the AI** (shortened):
+
+> Add an optional diversity penalty. Build the top k greedily. For each next pick, its adjusted score is its normal score minus 1.0 per earlier pick by the same artist, minus 0.5 per earlier pick in the same genre. Report the adjusted score, and add one reason line per penalty. With the penalty off, the output must be byte-for-byte identical to today's.
+
+**Penalty sizes and how to change them.** The defaults are `ARTIST_PENALTY = 1.0` and `GENRE_PENALTY = 0.5` in `src/recommender.py`. Both are 0 unless you ask, and a penalty must be a finite number of 0 or more.
+
+- Command line: `--diverse` turns on both default sizes. The header gets one extra line: ` Diversity: on (artist -1.00, genre -0.50)`. It works with a profile name, `all`, `adversarial`, `extensions` and `--mode`.
+- Python: `recommend_songs(profile, songs, k=5, artist_penalty=1.0, genre_penalty=0.5)`, or `Recommender(songs, artist_penalty=1.0, genre_penalty=0.5)`. Any size works, for example `artist_penalty=100` for "never repeat an artist if you can avoid it".
+- `k` is now checked. It must be a whole number, and a `k` of 0 or less returns an empty list. Before this change, a negative `k` on the plain path sliced from the end and returned most of the catalog. Floats, `None`, strings and booleans raise a `ValueError`.
+
+**Real before and after for `lofi/chill`** (`python -m src.main lofi/chill`, then the same with `--diverse`):
+
+| # | Without `--diverse` | With `--diverse` |
+|---|---|---|
+| 1 | Midnight Coding, LoRoom (7.95) | Midnight Coding, LoRoom (7.95) |
+| 2 | Library Rain, Paper Lanterns (7.92) | Library Rain, Paper Lanterns (7.42) |
+| 3 | Focus Flow, LoRoom (6.99) | Spacewalk Thoughts, Orbit Bloom (6.51) |
+| 4 | Spacewalk Thoughts, Orbit Bloom (6.51) | Coffee Shop Stories, Slow Stereo (5.86) |
+| 5 | Coffee Shop Stories, Slow Stereo (5.86) | Hazy Static, Glass Orchard (5.41) |
+
+Library Rain lost 0.50 because Midnight Coding, also lofi, is already #1. Focus Flow shares both the artist (LoRoom) and the genre (lofi) with Midnight Coding, and the genre with Library Rain. So it would lose 1.0 + 0.5 + 0.5 = 2.0 and fall from 6.99 to 4.99. That is below Hazy Static (5.41), which is a new artist and a new genre, so Hazy Static takes the last seat and Focus Flow ranks sixth.
+
+**Real output** of `python -m src.main lofi/chill --diverse`:
+
+```
+Loaded songs: 20
+================================================================
+ Top 5 recommendations for profile: lofi/chill
+ Diversity: on (artist -1.00, genre -0.50)
+ Targets: genre=lofi, mood=chill, energy=0.40, valence=0.60
+================================================================
+
+1. Midnight Coding by LoRoom
+   Score: 7.95   (lofi, chill)
+   Why:
+     - energy 0.42 vs target 0.40 (+3.99)
+     - mood match: chill (+2.00)
+     - valence 0.56 vs target 0.60 (+0.96)
+     - genre match: lofi (+1.00)
+
+2. Library Rain by Paper Lanterns
+   Score: 7.42   (lofi, chill)
+   Why:
+     - energy 0.35 vs target 0.40 (+3.92)
+     - mood match: chill (+2.00)
+     - valence 0.60 vs target 0.60 (+1.00)
+     - genre match: lofi (+1.00)
+     - diversity penalty: genre lofi already recommended (-0.50)
+
+3. Spacewalk Thoughts by Orbit Bloom
+   Score: 6.51   (ambient, chill)
+   Why:
+     - energy 0.28 vs target 0.40 (+3.56)
+     - mood match: chill (+2.00)
+     - valence 0.65 vs target 0.60 (+0.95)
+
+4. Coffee Shop Stories by Slow Stereo
+   Score: 5.86   (jazz, relaxed)
+   Why:
+     - energy 0.37 vs target 0.40 (+3.97)
+     - similar mood: relaxed is close to chill (+1.00)
+     - valence 0.71 vs target 0.60 (+0.89)
+
+5. Hazy Static by Glass Orchard
+   Score: 5.41   (shoegaze, dreamy)
+   Why:
+     - energy 0.52 vs target 0.40 (+3.56)
+     - similar mood: dreamy is close to chill (+1.00)
+     - valence 0.45 vs target 0.60 (+0.85)
+```
+
+**Results over the 14 profiles** (the 4 everyday, 6 adversarial and 4 extension profiles, balanced mode, `k=5`, from running the code for both settings):
+
+| Setting | Top-5 lists that change | Avg distinct artists (of 5) | Avg distinct genres (of 5) |
+|---|---|---|---|
+| Off (default) | 0 | 4.71 | 4.36 |
+| `--diverse` (artist 1.0, genre 0.5) | 5 of 14 | 4.93 | 4.57 |
+| Penalties 100 / 100 | 8 of 14 | 5.00 | 5.00 |
+
+With the default sizes, the lists that change are `lofi/chill`, `adv-ghost-labels`, `adv-calm-labels-high-energy`, `adv-romantic-rnb` and `ext-instrumental-focus`. With 100 / 100, every top 5 has 5 different artists and 5 different genres.
+
+**Honest limits.**
+
+- The catalog is small. It has 18 artists, and only Neon Echo and LoRoom have two songs. It has 17 genres, and only lofi and pop repeat. So the default effect is small: 5 of 14 lists change.
+- Matching is by exact text. "Neon Echo" and "neon echo " count as different artists, and the penalty would not apply.
+- The default penalties are absolute, so they are relatively weak on extension profiles, whose scores run from 10 to 11.
+- Greedy is not globally optimal. It fixes each pick in order and never goes back, so a different list might have a better total.
+- It can drop a more relevant song for variety. `lofi/chill` lost Focus Flow (6.99) for Hazy Static (5.41). Large penalties can also push scores below 0.
+- `Recommender.explain_recommendation` explains one song's own fit and shows no penalty lines. So it can disagree with the adjusted score the CLI shows.
+- The reported score is a ranking score, not a similarity measure. After a penalty it no longer says how well a song fits.
+- This is a variety and exposure mechanism, not true fairness. It does not fix the one-song-per-genre problem, the dominance of energy, or the other biases in the model card.

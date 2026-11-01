@@ -9,13 +9,15 @@ Usage (from the project root):
     python -m src.main extensions   # run the profiles that use the extra song attributes
     python -m src.main pop/happy --mode mood-first   # rank with another scoring mode
     python -m src.main --list-modes                  # show the scoring modes
+    python -m src.main lofi/chill --diverse          # penalize repeated artists and genres in the top 5
 """
 
 import argparse
 import sys
 
 from src.recommender import (
-    DEFAULT_MODE, EXTENSION_KEYS, MODES, load_songs, recommend_songs, resolve_mode,
+    ARTIST_PENALTY, DEFAULT_MODE, EXTENSION_KEYS, GENRE_PENALTY, MODES,
+    load_songs, recommend_songs, resolve_mode,
 )
 
 PROFILES = {
@@ -114,11 +116,15 @@ DEFAULT_PROFILE = "pop/happy"
 WIDTH = 64
 
 
-def print_recommendations(profile_name: str, user_prefs: dict, recommendations: list, mode_name: str = DEFAULT_MODE) -> None:
+def print_recommendations(
+    profile_name: str, user_prefs: dict, recommendations: list, mode_name: str = DEFAULT_MODE, diverse: bool = False
+) -> None:
     print("=" * WIDTH)
     print(f" Top {len(recommendations)} recommendations for profile: {profile_name}")
     if mode_name != DEFAULT_MODE:
         print(f" Mode: {mode_name}")
+    if diverse:
+        print(f" Diversity: on (artist -{ARTIST_PENALTY:.2f}, genre -{GENRE_PENALTY:.2f})")
     targets = ", ".join(
         f"{key}={user_prefs[key]:.2f}" if isinstance(user_prefs[key], float) else f"{key}={user_prefs[key]}"
         for key in ("genre", "mood", "energy", "valence")
@@ -162,6 +168,10 @@ def main(argv=None) -> None:
     )
     parser.add_argument("--mode", metavar="MODE", help=f"scoring mode: {', '.join(MODES)} (default: {DEFAULT_MODE})")
     parser.add_argument("--list-modes", action="store_true", help="show the scoring modes and exit")
+    parser.add_argument(
+        "--diverse", action="store_true",
+        help=f"penalize repeated artists (-{ARTIST_PENALTY:.2f}) and genres (-{GENRE_PENALTY:.2f}) in the top results",
+    )
     args = parser.parse_args(argv)
 
     if args.list_modes:
@@ -186,13 +196,15 @@ def main(argv=None) -> None:
     except ValueError as error:
         parser.error(str(error))
 
+    penalties = {"artist_penalty": ARTIST_PENALTY, "genre_penalty": GENRE_PENALTY} if args.diverse else {}
+
     songs = load_songs("data/songs.csv")
     print(f"Loaded songs: {len(songs)}")
 
     for profile_name in profile_names:
         user_prefs = ALL_PROFILES[profile_name]
-        recommendations = recommend_songs(user_prefs, songs, k=5, mode=mode)
-        print_recommendations(profile_name, user_prefs, recommendations, mode.name)
+        recommendations = recommend_songs(user_prefs, songs, k=5, mode=mode, **penalties)
+        print_recommendations(profile_name, user_prefs, recommendations, mode.name, args.diverse)
 
 
 if __name__ == "__main__":
