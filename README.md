@@ -198,11 +198,498 @@ Other profiles are defined in `PROFILES` in `src/main.py`. For example, `python 
 
 ## Experiments You Tried
 
-Use this section to document the experiments you ran. For example:
+### Stress test: diverse profiles
 
-- What happened when you changed the weight on genre from 2.0 to 0.5
-- What happened when you added tempo or valence to the score
-- How did your system behave for different types of users
+Profiles live in `PROFILES` and `ADVERSARIAL_PROFILES` in `src/main.py`. The adversarial ones came from a separate "System Evaluation" review session that was asked to design profiles that could trick the scoring logic. Every block below is real terminal output (`python -m src.main <profile>`). The pop/happy profile is shown in "Sample Recommendation Output" above.
+
+#### Three distinct everyday profiles
+
+**`lofi/chill`**
+
+```
+================================================================
+ Top 5 recommendations for profile: lofi/chill
+ Targets: genre=lofi, mood=chill, energy=0.40, valence=0.60
+================================================================
+
+1. Midnight Coding by LoRoom
+   Score: 7.95   (lofi, chill)
+   Why:
+     - energy 0.42 vs target 0.40 (+3.99)
+     - mood match: chill (+2.00)
+     - valence 0.56 vs target 0.60 (+0.96)
+     - genre match: lofi (+1.00)
+
+2. Library Rain by Paper Lanterns
+   Score: 7.92   (lofi, chill)
+   Why:
+     - energy 0.35 vs target 0.40 (+3.92)
+     - mood match: chill (+2.00)
+     - valence 0.60 vs target 0.60 (+1.00)
+     - genre match: lofi (+1.00)
+
+3. Focus Flow by LoRoom
+   Score: 6.99   (lofi, focused)
+   Why:
+     - energy 0.40 vs target 0.40 (+4.00)
+     - similar mood: focused is close to chill (+1.00)
+     - valence 0.59 vs target 0.60 (+0.99)
+     - genre match: lofi (+1.00)
+
+4. Spacewalk Thoughts by Orbit Bloom
+   Score: 6.51   (ambient, chill)
+   Why:
+     - energy 0.28 vs target 0.40 (+3.56)
+     - mood match: chill (+2.00)
+     - valence 0.65 vs target 0.60 (+0.95)
+
+5. Coffee Shop Stories by Slow Stereo
+   Score: 5.86   (jazz, relaxed)
+   Why:
+     - energy 0.37 vs target 0.40 (+3.97)
+     - similar mood: relaxed is close to chill (+1.00)
+     - valence 0.71 vs target 0.60 (+0.89)
+```
+
+Works as intended. All five picks are calm songs (energy 0.28 to 0.42). Midnight Coding and Library Rain are a near tie (7.95 vs 7.92), and Focus Flow (lofi, focused) earns half mood credit for being in the calm cluster.
+
+**`high-energy pop`**
+
+```
+================================================================
+ Top 5 recommendations for profile: high-energy pop
+ Targets: genre=pop, mood=euphoric, energy=0.95, valence=0.85
+================================================================
+
+1. Pulse Garden by Kinetic Bloom
+   Score: 6.94   (edm, euphoric)
+   Why:
+     - energy 0.92 vs target 0.95 (+3.97)
+     - mood match: euphoric (+2.00)
+     - valence 0.88 vs target 0.85 (+0.97)
+
+2. Sunrise City by Neon Echo
+   Score: 6.48   (pop, happy)
+   Why:
+     - energy 0.82 vs target 0.95 (+3.49)
+     - similar mood: happy is close to euphoric (+1.00)
+     - valence 0.84 vs target 0.85 (+0.99)
+     - genre match: pop (+1.00)
+
+3. Gym Hero by Max Pulse
+   Score: 5.91   (pop, intense)
+   Why:
+     - energy 0.93 vs target 0.95 (+3.99)
+     - valence 0.77 vs target 0.85 (+0.92)
+     - genre match: pop (+1.00)
+
+4. Sabor de Noche by Marisol Vega
+   Score: 5.29   (latin, playful)
+   Why:
+     - energy 0.80 vs target 0.95 (+3.34)
+     - similar mood: playful is close to euphoric (+1.00)
+     - valence 0.90 vs target 0.85 (+0.95)
+
+5. Rooftop Lights by Indigo Parade
+   Score: 4.96   (indie pop, happy)
+   Why:
+     - energy 0.76 vs target 0.95 (+3.00)
+     - similar mood: happy is close to euphoric (+1.00)
+     - valence 0.81 vs target 0.85 (+0.96)
+```
+
+Pulse Garden (edm, euphoric) beats both pop songs: an exact mood match and energy 0.92 outweigh the genre bonus. The catalog has only two pop songs, so Gym Hero (pop, intense, no mood credit) lands at #3. Reasonable for a workout listener.
+
+**`deep intense rock`**
+
+```
+================================================================
+ Top 5 recommendations for profile: deep intense rock
+ Targets: genre=rock, mood=intense, energy=0.95, valence=0.25
+================================================================
+
+1. Storm Runner by Voltline
+   Score: 7.72   (rock, intense)
+   Why:
+     - energy 0.91 vs target 0.95 (+3.95)
+     - mood match: intense (+2.00)
+     - valence 0.48 vs target 0.25 (+0.77)
+     - genre match: rock (+1.00)
+
+2. Gym Hero by Max Pulse
+   Score: 6.47   (pop, intense)
+   Why:
+     - energy 0.93 vs target 0.95 (+3.99)
+     - mood match: intense (+2.00)
+     - valence 0.77 vs target 0.25 (+0.48)
+
+3. Iron Tide by Black Harbor
+   Score: 5.94   (metal, angry)
+   Why:
+     - energy 0.97 vs target 0.95 (+3.99)
+     - similar mood: angry is close to intense (+1.00)
+     - valence 0.20 vs target 0.25 (+0.95)
+
+4. Concrete Crown by Kid Atlas
+   Score: 4.84   (hip hop, confident)
+   Why:
+     - energy 0.78 vs target 0.95 (+3.17)
+     - similar mood: confident is close to intense (+1.00)
+     - valence 0.58 vs target 0.25 (+0.67)
+
+5. Pulse Garden by Kinetic Bloom
+   Score: 4.34   (edm, euphoric)
+   Why:
+     - energy 0.92 vs target 0.95 (+3.97)
+     - valence 0.88 vs target 0.25 (+0.37)
+```
+
+Storm Runner is a near-perfect match. The surprise is #2: Gym Hero (pop, valence 0.77) outranks Iron Tide (metal, valence 0.20) even though the profile wants dark music (valence 0.25). Gym Hero is tagged exactly "intense" (+2.00) while Iron Tide is tagged "angry" (+1.00), and that one point outweighs Iron Tide's much better valence fit (+0.95 vs +0.48).
+
+#### Adversarial and edge-case profiles
+
+**`adv-conflict-sad`**: Conflict: sad and dark, but at high energy.
+
+```
+================================================================
+ Top 5 recommendations for profile: adv-conflict-sad
+ Targets: genre=classical, mood=melancholy, energy=0.95, valence=0.20
+================================================================
+
+1. Iron Tide by Black Harbor
+   Score: 4.99   (metal, angry)
+   Why:
+     - energy 0.97 vs target 0.95 (+3.99)
+     - valence 0.20 vs target 0.20 (+1.00)
+
+2. Storm Runner by Voltline
+   Score: 4.67   (rock, intense)
+   Why:
+     - energy 0.91 vs target 0.95 (+3.95)
+     - valence 0.48 vs target 0.20 (+0.72)
+
+3. Night Drive Loop by Neon Echo
+   Score: 4.61   (synthwave, moody)
+   Why:
+     - energy 0.75 vs target 0.95 (+2.90)
+     - similar mood: moody is close to melancholy (+1.00)
+     - valence 0.49 vs target 0.20 (+0.71)
+
+4. Gym Hero by Max Pulse
+   Score: 4.42   (pop, intense)
+   Why:
+     - energy 0.93 vs target 0.95 (+3.99)
+     - valence 0.77 vs target 0.20 (+0.43)
+
+5. Pulse Garden by Kinetic Bloom
+   Score: 4.29   (edm, euphoric)
+   Why:
+     - energy 0.92 vs target 0.95 (+3.97)
+     - valence 0.88 vs target 0.20 (+0.32)
+```
+
+Energy wins outright. The classical, melancholy song Moonlit Sonata (energy 0.22) matches both labels but is not in the top 5. A listener who asks for "sad" gets metal, rock and EDM; only Night Drive Loop (moody) is even close.
+
+**`adv-ghost-labels`**: Genre and mood that do not exist in the catalog.
+
+```
+================================================================
+ Top 5 recommendations for profile: adv-ghost-labels
+ Targets: genre=k-pop, mood=aggressive, energy=0.70, valence=0.70
+================================================================
+
+1. Rooftop Lights by Indigo Parade
+   Score: 4.78   (indie pop, happy)
+   Why:
+     - energy 0.76 vs target 0.70 (+3.89)
+     - valence 0.81 vs target 0.70 (+0.89)
+
+2. Night Drive Loop by Neon Echo
+   Score: 4.71   (synthwave, moody)
+   Why:
+     - energy 0.75 vs target 0.70 (+3.92)
+     - valence 0.49 vs target 0.70 (+0.79)
+
+3. Concrete Crown by Kid Atlas
+   Score: 4.68   (hip hop, confident)
+   Why:
+     - energy 0.78 vs target 0.70 (+3.80)
+     - valence 0.58 vs target 0.70 (+0.88)
+
+4. Sabor de Noche by Marisol Vega
+   Score: 4.49   (latin, playful)
+   Why:
+     - energy 0.80 vs target 0.70 (+3.69)
+     - valence 0.90 vs target 0.70 (+0.80)
+
+5. Sunrise City by Neon Echo
+   Score: 4.42   (pop, happy)
+   Why:
+     - energy 0.82 vs target 0.70 (+3.56)
+     - valence 0.84 vs target 0.70 (+0.86)
+```
+
+No crash, but nothing can match a label, so the ranking comes from energy and valence alone. The scores are bunched (4.78 down to 4.42) and the order is close to arbitrary, yet the output looks as confident as any other.
+
+**`adv-extreme-zero`**: Extreme numeric targets (energy 0.0, valence 0.0) with labels that point at loud, bright songs.
+
+```
+================================================================
+ Top 5 recommendations for profile: adv-extreme-zero
+ Targets: genre=pop, mood=happy, energy=0.00, valence=0.00
+================================================================
+
+1. Moonlit Sonata by Elara Voss
+   Score: 3.48   (classical, melancholy)
+   Why:
+     - energy 0.22 vs target 0.00 (+2.72)
+     - valence 0.24 vs target 0.00 (+0.76)
+
+2. Sunrise City by Neon Echo
+   Score: 3.18   (pop, happy)
+   Why:
+     - energy 0.82 vs target 0.00 (+0.02)
+     - mood match: happy (+2.00)
+     - valence 0.84 vs target 0.00 (+0.16)
+     - genre match: pop (+1.00)
+
+3. Spacewalk Thoughts by Orbit Bloom
+   Score: 2.49   (ambient, chill)
+   Why:
+     - energy 0.28 vs target 0.00 (+2.14)
+     - valence 0.65 vs target 0.00 (+0.35)
+
+4. Paper Boats by Willow & Ash
+   Score: 2.29   (folk, wistful)
+   Why:
+     - energy 0.33 vs target 0.00 (+1.67)
+     - valence 0.38 vs target 0.00 (+0.62)
+
+5. Rooftop Lights by Indigo Parade
+   Score: 2.23   (indie pop, happy)
+   Why:
+     - energy 0.76 vs target 0.00 (+0.04)
+     - mood match: happy (+2.00)
+     - valence 0.81 vs target 0.00 (+0.19)
+```
+
+Moonlit Sonata is the right #1, but Sunrise City (energy 0.82, valence 0.84) takes #2 over calmer, darker songs. Its genre and mood match add 3.00 points and its energy term is almost zero, but every other song is also far from the target. This contradicts the recipe note that labels "cannot easily outvote" a wrong energy level.
+
+**`adv-calm-labels-high-energy`**: Calm labels (ambient, chill) with a very high energy target.
+
+```
+================================================================
+ Top 5 recommendations for profile: adv-calm-labels-high-energy
+ Targets: genre=ambient, mood=chill, energy=0.92, valence=0.85
+================================================================
+
+1. Pulse Garden by Kinetic Bloom
+   Score: 4.97   (edm, euphoric)
+   Why:
+     - energy 0.92 vs target 0.92 (+4.00)
+     - valence 0.88 vs target 0.85 (+0.97)
+
+2. Gym Hero by Max Pulse
+   Score: 4.92   (pop, intense)
+   Why:
+     - energy 0.93 vs target 0.92 (+4.00)
+     - valence 0.77 vs target 0.85 (+0.92)
+
+3. Sunrise City by Neon Echo
+   Score: 4.68   (pop, happy)
+   Why:
+     - energy 0.82 vs target 0.92 (+3.69)
+     - valence 0.84 vs target 0.85 (+0.99)
+
+4. Storm Runner by Voltline
+   Score: 4.63   (rock, intense)
+   Why:
+     - energy 0.91 vs target 0.92 (+4.00)
+     - valence 0.48 vs target 0.85 (+0.63)
+
+5. Sabor de Noche by Marisol Vega
+   Score: 4.51   (latin, playful)
+   Why:
+     - energy 0.80 vs target 0.92 (+3.56)
+     - valence 0.90 vs target 0.85 (+0.95)
+```
+
+The numbers win and no ambient or chill song appears. That is defensible, but the genre and mood request is effectively ignored. Pulse Garden and Gym Hero are only 0.05 apart.
+
+**`adv-energy-only`**: A thin profile with only an energy target.
+
+```
+================================================================
+ Top 5 recommendations for profile: adv-energy-only
+ Targets: energy=0.50
+================================================================
+
+1. Hazy Static by Glass Orchard
+   Score: 3.99   (shoegaze, dreamy)
+   Why:
+     - energy 0.52 vs target 0.50 (+3.99)
+
+2. Velvet Hours by Luna Marsh
+   Score: 3.99   (r&b, romantic)
+   Why:
+     - energy 0.48 vs target 0.50 (+3.99)
+
+3. Dust Road Home by Hollow Pines
+   Score: 3.92   (country, nostalgic)
+   Why:
+     - energy 0.55 vs target 0.50 (+3.92)
+
+4. Island Breeze by Sol Rivera
+   Score: 3.80   (reggae, uplifting)
+   Why:
+     - energy 0.58 vs target 0.50 (+3.80)
+
+5. Midnight Coding by LoRoom
+   Score: 3.80   (lofi, chill)
+   Why:
+     - energy 0.42 vs target 0.50 (+3.80)
+```
+
+Graceful, with no crash. The top two songs tie at 3.99 with the same energy gap, so the title tie-break decides. Scores can never exceed 4.0, but nothing in the output signals that the profile was thin.
+
+**`adv-romantic-rnb`**: A mood (romantic) that is in no mood cluster, with a perfect catalog match.
+
+```
+================================================================
+ Top 5 recommendations for profile: adv-romantic-rnb
+ Targets: genre=r&b, mood=romantic, energy=0.48, valence=0.62
+================================================================
+
+1. Velvet Hours by Luna Marsh
+   Score: 8.00   (r&b, romantic)
+   Why:
+     - energy 0.48 vs target 0.48 (+4.00)
+     - mood match: romantic (+2.00)
+     - valence 0.62 vs target 0.62 (+1.00)
+     - genre match: r&b (+1.00)
+
+2. Midnight Coding by LoRoom
+   Score: 4.83   (lofi, chill)
+   Why:
+     - energy 0.42 vs target 0.48 (+3.89)
+     - valence 0.56 vs target 0.62 (+0.94)
+
+3. Dust Road Home by Hollow Pines
+   Score: 4.81   (country, nostalgic)
+   Why:
+     - energy 0.55 vs target 0.48 (+3.85)
+     - valence 0.66 vs target 0.62 (+0.96)
+
+4. Hazy Static by Glass Orchard
+   Score: 4.78   (shoegaze, dreamy)
+   Why:
+     - energy 0.52 vs target 0.48 (+3.95)
+     - valence 0.45 vs target 0.62 (+0.83)
+
+5. Focus Flow by LoRoom
+   Score: 4.77   (lofi, focused)
+   Why:
+     - energy 0.40 vs target 0.48 (+3.80)
+     - valence 0.59 vs target 0.62 (+0.97)
+```
+
+Velvet Hours scores a perfect 8.00, then there is a 3.17-point cliff. Ranks 2 to 5 sit within 0.06 of each other and are effectively a coin flip, because nothing else earns any mood credit.
+
+#### What the stress test showed
+
+1. **Energy beats labels when songs exist near the target, and labels win when none do.** The sad and calm profiles lose their mood and genre to the energy term, because plenty of songs sit near the high-energy target. At an extreme target like energy 0.0, almost every song gets near-zero energy points, so a genre and mood match (+3.00) decides the order. The recipe's claim that labels cannot easily outvote a very wrong energy level holds only in the first case.
+2. **Exact label tags can outweigh a better sonic fit.** Gym Hero over Iron Tide for the rock listener is the clearest example: a song is rewarded for carrying the right word, and "angry" vs "intense" is a one-point difference.
+3. **Weak results look as confident as strong ones.** With ghost labels, an energy-only profile, or an empty profile, the system still prints five songs with no warning that nothing matched. Scores are also not bounded to 0 to 8 for out-of-range input.
+
+I also probed inputs directly (not in `main.py`): an empty profile `{}` scores every song 0.00 and returns them alphabetically; `energy` 1.5 with `valence` -1.0 gives negative scores; `energy` given as the string `"0.8"` crashes with a `TypeError`; and `"Pop"` or `"Happy "` (different case or a trailing space) silently match nothing.
+
+### Accuracy and surprises
+
+**Do the results feel right?**
+
+- **pop/happy:** mostly yes. Sunrise City is the only pop and happy song, so it should be #1, and the happy indie-pop song (Rooftop Lights) is a sensible #2. Gym Hero at #5 feels slightly off, because it is an intense workout track, not a happy one. It is there for its genre match and high energy.
+- **lofi/chill:** yes. All five picks are calm, low-energy songs.
+- **deep intense rock:** mostly, but Gym Hero (upbeat pop) at #2 above Iron Tide (dark metal) feels wrong for a listener who asked for dark music.
+- **high-energy pop:** a surprise. The #1 song is an EDM track, not a pop song.
+
+**Why does Pulse Garden rank first for "high-energy pop"?** I asked a separate evaluation session to explain it from the code in `src/recommender.py` and to check the arithmetic by running `score_song`. The profile is `genre=pop, mood=euphoric, energy=0.95, valence=0.85`.
+
+| Song | Energy (max 4.0) | Mood (max 2.0) | Valence (max 1.0) | Genre (max 1.0) | Total |
+|---|---|---|---|---|---|
+| **Pulse Garden** (edm, euphoric) | 3.97 | 2.00 (exact) | 0.97 | 0 | **6.94** |
+| Sunrise City (pop, happy) | 3.49 | 1.00 (same cluster) | 0.99 | 1.00 | 6.48 |
+| Gym Hero (pop, intense) | 3.99 | 0 | 0.92 | 1.00 | 5.91 |
+
+Pulse Garden is the only song that gets the full mood match *and* near-perfect energy, and together those are worth more than the 1.00 genre bonus the pop songs get. Over Sunrise City the gap is mood +1.00 and energy +0.48, minus genre 1.00. The ranking is defensible, because my profile asked for "euphoric" and Pulse Garden is the only euphoric song. The surprise comes from the profile pairing a pop genre with a mood only EDM carries, and from genre being the lowest-weighted term.
+
+**How much genre weight would put a pop song first?** About 1.46 for Sunrise City, and it would win by only 0.003, so that is a knife-edge threshold and not a robust fix. Gym Hero would need above 2.03. At 1.46, 2.0 and 3.0 the #1 song for pop/happy, lofi/chill and deep intense rock does not change, so a larger genre weight would not break the other profiles in this catalog. I kept 1.0 because genres are sparse here, and I did not test other energy or mood weights.
+
+**Does the same song keep appearing at the top of every list?** No. Across all 10 profiles there are nine different #1 songs, and only Pulse Garden is #1 twice. Three songs do recur in the top 5: Sunrise City, Pulse Garden and Gym Hero each appear in 5 of the 10 lists (Rooftop Lights and Sabor de Noche in 4). That recurrence does not look like an over-strong genre weight, since genre is only 1 of 8 points. The more likely causes are that six of the ten profiles target energy 0.7 or higher, which favors the same loud, bright songs, and that the 20-song catalog has so few genre and mood matches that energy and valence decide most lists. All 20 songs appear in at least one top 5. The energy term (4.0 of 8.0) is the dominant weight and the first thing to test next.
+
+### Experiment: weight shift (double energy, halve genre)
+
+**Change tested:** `ENERGY_WEIGHT` 4.0 to 8.0 and `GENRE_WEIGHT` 1.0 to 0.5, with everything else unchanged. A separate session applied the edit to `src/recommender.py` and checked that the math stayed valid by running it: the maximum score becomes 11.5 (a perfect-match song, Velvet Hours, scores exactly 11.50), scores never went negative for in-range profiles (minimum 0.13), a perfect energy match earns exactly 8.0, the energy term falls steadily as the gap grows, and the starter tests still pass. I ran every profile before and after, then reverted the change. The original weights are the ones documented above.
+
+Output of `python -m src.main pop/happy` with the experimental weights:
+
+```
+================================================================
+ Top 5 recommendations for profile: pop/happy
+ Targets: genre=pop, mood=happy, energy=0.80, valence=0.80
+================================================================
+
+1. Sunrise City by Neon Echo
+   Score: 11.43   (pop, happy)
+   Why:
+     - energy 0.82 vs target 0.80 (+7.97)
+     - mood match: happy (+2.00)
+     - valence 0.84 vs target 0.80 (+0.96)
+     - genre match: pop (+0.50)
+
+2. Rooftop Lights by Indigo Parade
+   Score: 10.89   (indie pop, happy)
+   Why:
+     - energy 0.76 vs target 0.80 (+7.90)
+     - mood match: happy (+2.00)
+     - valence 0.81 vs target 0.80 (+0.99)
+
+3. Sabor de Noche by Marisol Vega
+   Score: 9.90   (latin, playful)
+   Why:
+     - energy 0.80 vs target 0.80 (+8.00)
+     - similar mood: playful is close to happy (+1.00)
+     - valence 0.90 vs target 0.80 (+0.90)
+
+4. Pulse Garden by Kinetic Bloom
+   Score: 9.05   (edm, euphoric)
+   Why:
+     - energy 0.92 vs target 0.80 (+7.13)
+     - similar mood: euphoric is close to happy (+1.00)
+     - valence 0.88 vs target 0.80 (+0.92)
+
+5. Concrete Crown by Kid Atlas
+   Score: 8.75   (hip hop, confident)
+   Why:
+     - energy 0.78 vs target 0.80 (+7.97)
+     - valence 0.58 vs target 0.80 (+0.78)
+```
+
+**What changed across all 10 profiles:** the #1 song stayed the same in all 10. The full top 5 was identical in 3 profiles, the same five songs in a different order in 3, and a different set of songs in 4.
+
+| Profile | Change in ranks 2 to 5 | Better, worse, or just different? |
+|---|---|---|
+| pop/happy | Gym Hero (pop, intense) drops out, Concrete Crown (hip hop, confident) enters at #5 | Different. Neither is "happy"; Gym Hero simply lost its genre bonus |
+| lofi/chill | none | Unchanged |
+| high-energy pop | Rooftop Lights drops out, Storm Runner (rock, intense) enters at #5 | Slightly worse: a rock song now appears for a pop listener |
+| deep intense rock | #4 and #5 swap | Different. Gym Hero still outranks Iron Tide |
+| adv-conflict-sad | Night Drive Loop (moody, the closest thing to "sad") falls from #3 to #5 | Worse: the one mood-relevant song loses ground |
+| adv-ghost-labels | none | Unchanged |
+| adv-extreme-zero | Sunrise City and Rooftop Lights drop out; four calm songs fill ranks 2 to 5 | **Better.** The label match no longer beats a very wrong energy |
+| adv-calm-labels-high-energy | Sabor de Noche drops out, Iron Tide enters at #5 | Different. The labels were already ignored |
+| adv-energy-only | none | Unchanged |
+| adv-romantic-rnb | Same songs, reordered (ranks 2 to 5 still within 0.16) | Different. Still a near coin flip |
+
+**Verdict: more different than more accurate.** The change fixed the one case it was aimed at, the extreme-energy profile, where label matches had been outranking songs that fit the energy target. But it made two listeners slightly worse off (the sad listener and the pop listener), and it left the near-ties and the Gym Hero versus Iron Tide problem alone. The top pick is robust to this change, while ranks 3 to 5 are sensitive to the weights. That fits the earlier finding that energy already dominates: doubling it makes the mood and genre labels matter even less, which helps users with extreme energy targets and hurts users who care about mood. I kept the original weights. Absolute scores are not comparable between the two settings, since the maximum moved from 8.0 to 11.5.
 
 ---
 
