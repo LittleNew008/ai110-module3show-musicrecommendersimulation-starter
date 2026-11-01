@@ -11,7 +11,7 @@ Your goal is to:
 - Evaluate what your system gets right and wrong
 - Reflect on how this mirrors real world AI recommenders
 
-Replace this paragraph with your own summary of what your version does.
+My version is **VibeCheck 1.0**, a small content-based music recommender that runs in the terminal. It reads a 20-song catalog and scores every song against a listener's taste profile (genre, mood, energy, and sunniness). Then it prints the top 5 with the points behind each pick. I tested it with ten profiles, six of them built to trick it, and used the results to document its biases and limits.
 
 ---
 
@@ -27,7 +27,7 @@ Used in scoring: `energy`, `mood`, `genre`, and `valence`. The rest are kept for
 
 ### UserProfile features
 
-Each `UserProfile` stores: `favorite_genre`, `favorite_mood`, `target_energy`, `likes_acoustic`. A `target_valence` field is planned as an optional addition for the valence term.
+Each `UserProfile` stores: `favorite_genre`, `favorite_mood`, `target_energy`, `likes_acoustic`. An optional `target_valence` field (empty by default) adds the valence term to the score.
 
 ### Data flow
 
@@ -63,7 +63,7 @@ flowchart TD
     MORE -->|no| SORT
 ```
 
-In code: `main.py` builds the profile and calls `recommend_songs()`, which runs the loop by calling `score_song()` once per song, then sorts and slices the top `k`. Scoring judges a single song in isolation, and ranking is the only step that sees the whole list.
+In code: `main.py` builds the profile and calls `recommend_songs()`, which runs the loop by calling `score_song()` once per song, then sorts and slices the top `k`. Scoring judges a single song in isolation, and ranking is the only step that sees the whole list. The `Recommender` class in `src/recommender.py` wraps the same two functions for the object-style API.
 
 ### Algorithm recipe: scoring and ranking
 
@@ -76,11 +76,11 @@ score = 4.0 * exp(-(song.energy - target_energy)^2 / (2 * 0.25^2))   # energy cl
       + 1.0 * (1 if song.genre == favorite_genre else 0)
 ```
 
-The maximum score is 8.0.
+The maximum score is 8.0. Targets outside 0 to 1 are clamped to that range first.
 
 | Term | Max points | Why |
 |---|---|---|
-| Energy (Gaussian closeness) | 4.0 | Strongest, cleanest signal. The Gaussian shape forgives small gaps but penalizes large ones, so labels cannot easily outvote a very wrong energy level. |
+| Energy (Gaussian closeness) | 4.0 | Strongest, cleanest signal. The Gaussian shape forgives small gaps but penalizes large ones, so labels usually cannot outvote a very wrong energy level. The exception is an extreme target where no song is close: then the labels can decide the order (see the stress test). |
 | Mood | 2.0 | Closest thing to a "vibe" label. Worth more than genre. |
 | Valence (linear closeness) | 1.0 | The one numeric axis that is independent of energy. Small weight because it is a refinement. |
 | Genre | 1.0 | Genres are sparse (most appear once), so a genre match is a nudge, not a deciding factor. |
@@ -119,6 +119,7 @@ The maximum score is 8.0.
    python -m venv .venv
    source .venv/bin/activate      # Mac or Linux
    .venv\Scripts\activate         # Windows
+   ```
 
 2. Install dependencies
 
@@ -126,21 +127,24 @@ The maximum score is 8.0.
 pip install -r requirements.txt
 ```
 
-3. Run the app:
+3. Run the app (from the project root):
 
 ```bash
-python -m src.main
+python -m src.main               # default pop/happy profile
+python -m src.main lofi/chill    # any profile name in src/main.py
+python -m src.main all           # the four everyday profiles
+python -m src.main adversarial   # the six edge-case profiles
 ```
 
 ### Running Tests
 
-Run the starter tests with:
+Run the tests with:
 
 ```bash
 pytest
 ```
 
-You can add more tests in `tests/test_recommender.py`.
+There are 11 tests in `tests/test_recommender.py`. They check the `Recommender` class (including a reversed-input test and a match against the function-based version) and the input cleaning, not exact scores.
 
 ---
 
@@ -601,7 +605,7 @@ Velvet Hours scores a perfect 8.00, then there is a 3.17-point cliff. Ranks 2 to
 2. **Exact label tags can outweigh a better sonic fit.** Gym Hero over Iron Tide for the rock listener is the clearest example: a song is rewarded for carrying the right word, and "angry" vs "intense" is a one-point difference.
 3. **Weak results look as confident as strong ones.** With ghost labels, an energy-only profile, or an empty profile, the system still prints five songs with no warning that nothing matched. Scores are also not bounded to 0 to 8 for out-of-range input.
 
-I also probed inputs directly (not in `main.py`): an empty profile `{}` scores every song 0.00 and returns them alphabetically; `energy` 1.5 with `valence` -1.0 gives negative scores; `energy` given as the string `"0.8"` crashes with a `TypeError`; and `"Pop"` or `"Happy "` (different case or a trailing space) silently match nothing.
+I also probed inputs directly (not in `main.py`): an empty profile `{}` scores every song 0.00 and returns them alphabetically; `energy` 1.5 with `valence` -1.0 gives negative scores; `energy` given as the string `"0.8"` crashes with a `TypeError`; and `"Pop"` or `"Happy "` (different case or a trailing space) silently match nothing. These input problems were fixed afterwards: the recommender now clamps numbers to 0 to 1, ignores case and extra spaces, accepts numbers given as text, and raises a clear `ValueError` for a non-numeric target or an empty profile. The rankings for every valid profile above are unchanged.
 
 ### Accuracy and surprises
 
@@ -695,28 +699,21 @@ Output of `python -m src.main pop/happy` with the experimental weights:
 
 ## Limitations and Risks
 
-Summarize some limitations of your recommender.
+- **Tiny catalog.** There are 20 songs and most genres appear once. Ten songs have invented numbers, not measurements.
+- **Energy dominates.** It is half of the points. Listeners who want very quiet music (below 0.30 energy) are served worst, because the catalog has almost no songs there.
+- **Labels must match word for word.** "Indie pop" earns nothing for a "pop" listener, and "romantic" is in no group of related moods.
+- **One taste per profile.** A profile cannot hold several favorites or dislikes. `likes_acoustic` is stored but not scored.
+- **Weak matches look confident.** The system always prints five songs, even when nothing matched, and it gives no warning. (Bad input is handled: numbers are clamped to 0 to 1, capital letters and extra spaces are ignored, and a non-numeric target or an empty profile raises a clear error.)
+- **No lyrics, language, or era.** It also learns nothing from skips or likes, so it can only narrow taste, never widen it.
 
-Examples:
-
-- It only works on a tiny catalog
-- It does not understand lyrics or language
-- It might over favor one genre or mood
-
-You will go deeper on this in your model card.
+The model card covers these in more detail (sections 5 and 6).
 
 ---
 
 ## Reflection
 
-Read and complete `model_card.md`:
+The full model card is here: [**Model Card**](model_card.md). My personal reflection is in section 9.
 
-[**Model Card**](model_card.md)
+**How recommenders turn data into predictions.** A recommender compares numbers and labels. In my version, each song earns points for how close its energy and sunniness are to the listener's targets, plus points for matching mood and genre. Then a sort picks the top five. Even this tiny version felt like a real recommendation, partly because it explains every pick. It never understands the music, though. It only sees the numbers and tags it was given.
 
-Write 1 to 2 paragraphs here about what you learned:
-
-- about how recommenders turn data into predictions
-- about where bias or unfairness could show up in systems like this
-
-
-
+**Where bias or unfairness can show up.** Bias hides in small choices. I gave energy half of all the points, so listeners who want very quiet music were served worst. Labels must match word for word, so an "indie pop" song earns nothing for a "pop" listener. The catalog has one song for most genres, so some listeners get a full list of good matches and others get filler. A real app with millions of songs hides the same problems behind a confident-looking list. It is worth asking who the catalog and the weights were built for.

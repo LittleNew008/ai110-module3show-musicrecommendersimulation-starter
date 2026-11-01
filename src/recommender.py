@@ -1,6 +1,6 @@
 import csv
 from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import math
 
 # Algorithm Recipe weights (maximum score is 8.0)
@@ -45,6 +45,7 @@ class UserProfile:
     favorite_mood: str
     target_energy: float
     likes_acoustic: bool
+    target_valence: Optional[float] = None
 
 class Recommender:
     """
@@ -54,13 +55,29 @@ class Recommender:
     def __init__(self, songs: List[Song]):
         self.songs = songs
 
+    @staticmethod
+    def _prefs(user: UserProfile) -> Dict:
+        """Map a UserProfile to the prefs dict used by score_song."""
+        prefs = {
+            "genre": user.favorite_genre,
+            "mood": user.favorite_mood,
+            "energy": user.target_energy,
+        }
+        if user.target_valence is not None:
+            prefs["valence"] = user.target_valence
+        return prefs
+
     def recommend(self, user: UserProfile, k: int = 5) -> List[Song]:
-        # TODO: Implement recommendation logic
-        return self.songs[:k]
+        """Return the top k songs for the user, best first, reusing recommend_songs."""
+        by_id = {song.id: song for song in self.songs}
+        rows = [asdict(song) for song in self.songs]
+        ranked = recommend_songs(self._prefs(user), rows, k)
+        return [by_id[row["id"]] for row, _, _ in ranked]
 
     def explain_recommendation(self, user: UserProfile, song: Song) -> str:
-        # TODO: Implement explanation logic
-        return "Explanation placeholder"
+        """Explain why a song fits the user, reusing the reasons from score_song."""
+        _, reasons = score_song(self._prefs(user), asdict(song))
+        return "; ".join(reasons) or "No preferences were given, so this song was not scored."
 
 def load_songs(csv_path: str) -> List[Dict]:
     """Load songs from a CSV file as dicts, converting numeric columns to int or float."""
@@ -77,8 +94,31 @@ def load_songs(csv_path: str) -> List[Dict]:
             songs.append(row)
     return songs
 
+TEXT_PREFS = ("genre", "mood")
+NUMBER_PREFS = ("energy", "valence")
+
+def clean_prefs(user_prefs: Dict) -> Dict:
+    """Return a cleaned copy of a profile: trimmed lowercase text, numbers clamped to 0..1."""
+    cleaned = dict(user_prefs)
+    for key in TEXT_PREFS:
+        if cleaned.get(key) is not None:
+            cleaned[key] = str(cleaned[key]).strip().lower() or None
+    for key in NUMBER_PREFS:
+        if cleaned.get(key) is not None:
+            try:
+                value = float(cleaned[key])
+            except (TypeError, ValueError):
+                value = math.nan
+            if math.isnan(value):
+                raise ValueError(f"'{key}' must be a number between 0 and 1, got {cleaned[key]!r}")
+            cleaned[key] = min(max(value, 0.0), 1.0)
+    if all(cleaned.get(key) is None for key in TEXT_PREFS + NUMBER_PREFS):
+        raise ValueError("profile needs at least one of: genre, mood, energy, valence")
+    return cleaned
+
 def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
     """Score one song against user preferences, returning (score, list of reasons)."""
+    user_prefs = clean_prefs(user_prefs)
     score = 0.0
     reasons: List[str] = []
 
@@ -119,11 +159,13 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
 
 def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5) -> List[Tuple[Dict, float, str]]:
     """Score every song and return the top k as (song, score, explanation), best first."""
-    scored = [(song, *score_song(user_prefs, song)) for song in songs]
+    prefs = clean_prefs(user_prefs)
+    scored = [(song, *score_song(prefs, song)) for song in songs]
+    target_energy = prefs.get("energy")
 
     def rank_key(item):
         song, score, _ = item
-        energy_gap = abs(song["energy"] - user_prefs.get("energy", song["energy"]))
+        energy_gap = 0.0 if target_energy is None else abs(song["energy"] - target_energy)
         return (-score, energy_gap, song["title"])
 
     ranked = sorted(scored, key=rank_key)
