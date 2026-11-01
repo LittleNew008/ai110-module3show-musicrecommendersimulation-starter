@@ -149,7 +149,13 @@ python -m src.main --list-modes        # show the four scoring modes and exit
 python -m src.main lofi/chill --diverse                  # penalize repeated artists and genres in the top 5
 python -m src.main lofi/chill --diverse --mode mood-first   # diversity plus another scoring mode
 python -m src.main all --diverse                         # every everyday profile with diversity on
+python -m src.main pop/happy --table                     # the top 5 as a table with the reasons (100 columns wide)
+python -m src.main lofi/chill --table --diverse          # a table with the diversity penalty lines in it
+python -m src.main lofi/chill --table --mode mood-first  # a table in another scoring mode
+python -m src.main all --table --width 80                # every everyday profile as an 80-column table
 ```
+
+`--table` shows each profile's results as a table instead of the list. `--width N` sets the table width in columns (default 100, minimum 60) and is ignored without `--table`.
 
 ### Running Tests
 
@@ -159,7 +165,9 @@ Run the tests with:
 pytest
 ```
 
-There are 610 test cases in `tests/test_recommender.py`, written as 95 test functions (`pytest --collect-only -q` counts parametrized cases separately). They check the `Recommender` class (including a reversed-input test and a match against the function-based version), the input cleaning, the extension attributes (CSV loading, each scoring term with hand-computed values, the `UserProfile` extension fields, and the `extensions` CLI keyword), and the scoring modes (the exact weight table, `ScoringMode` validation, tie-breaking in every mode, and the `--mode` and `--list-modes` flags), and the diversity penalty (the exact score arithmetic, ties, that zero penalties equal the plain result, validation of `k` and of the penalty sizes, missing artists or genres, the `Recommender` pass-through, and the `--diverse` flag). A few extension tests check exact scores; the original tests do not.
+There are 735 test cases in two files (`pytest --collect-only -q` counts parametrized cases separately). `tests/test_recommender.py` has 610 cases, written as 95 test functions. They check the `Recommender` class (including a reversed-input test and a match against the function-based version), the input cleaning, the extension attributes (CSV loading, each scoring term with hand-computed values, the `UserProfile` extension fields, and the `extensions` CLI keyword), and the scoring modes (the exact weight table, `ScoringMode` validation, tie-breaking in every mode, and the `--mode` and `--list-modes` flags), and the diversity penalty (the exact score arithmetic, ties, that zero penalties equal the plain result, validation of `k` and of the penalty sizes, missing artists or genres, the `Recommender` pass-through, and the `--diverse` flag). A few extension tests check exact scores; the original tests do not.
+
+`tests/test_table.py` has 125 cases, written as 35 test functions, for the table output. They check, for every profile in every scoring mode with diversity on and off, that every table line has the same width and fits the width asked for, that every title, artist, score and reason is shown in full (one reason per bullet), and that Score and Rank are right-aligned. They also pin the exact column widths for several real profiles, the blank line before the table in the CLI output, the empty and whitespace-only fields, the zero-width characters, the bad widths (`--width 59`, `abc`), and that `--table` and `--width` change the CLI output while the plain output stays the same.
 
 ---
 
@@ -1035,3 +1043,215 @@ With the default sizes, the lists that change are `lofi/chill`, `adv-ghost-label
 - `Recommender.explain_recommendation` explains one song's own fit and shows no penalty lines. So it can disagree with the adjusted score the CLI shows.
 - The reported score is a ranking score, not a similarity measure. After a penalty it no longer says how well a song fits.
 - This is a variety and exposure mechanism, not true fairness. It does not fix the one-song-per-genre problem, the dominance of energy, or the other biases in the model card.
+
+### Challenge 4: Visual summary table
+
+**What I added.** An optional table view of the top 5. It shows the rank, title, artist, genre and mood, score, and **every reason behind the score**. It is off by default, so the normal output is exactly as before.
+
+**How to use it.**
+
+```bash
+python -m src.main pop/happy --table                     # default width: 100 columns
+python -m src.main lofi/chill --table --diverse          # diversity penalty lines show up as reasons
+python -m src.main all --table --mode mood-first         # works with a mode, and with all, adversarial, extensions
+python -m src.main ext-90s-nostalgia --table --width 70  # a narrower table; the text wraps
+```
+
+In Python: `from src.table import format_table`, then `format_table(recommendations, width=100)` returns the table as a string.
+
+**Brainstorm.** I considered two ways to draw the table. The first is the `tabulate` library. It is short to use, but it is not installed here and it is not in `requirements.txt`, so using it would add a dependency (and a failure if a classmate does not install it). It also would not give me control over how a long reason wraps. The second is plain ASCII text built with the standard library. It needs about 160 lines of code, but there is no dependency, I control the wrapping (one reason per bullet, never dropped), and it is a pure function that is easy to test. I chose plain ASCII. I did not add any dependency, and `requirements.txt` did not change.
+
+**The prompt I gave the AI** (shortened):
+
+> Suggest and implement a way to display the top recommendations as a formatted table in the terminal, using a library like tabulate or simple ASCII formatting. The table MUST include the reasons for each score, not only the score.
+
+**The layout rules, in plain language.**
+
+- Six columns: Rank, Title, Artist, Genre / Mood, Score, Why.
+- Each song is one block of lines. Each reason sits on its own line with a `- ` bullet. A reason that is too long wraps to the next line, indented under its bullet. No reason is dropped or shortened.
+- Long titles, artists and genres wrap inside their cells.
+- Every line of the table has exactly the same width, and the table is never wider than the width asked for.
+- Only plain ASCII characters draw the table (`+`, `-`, `=`, `|`), so it works in any terminal.
+- The default width is 100 columns. The minimum is 60. Set it with `--width N`; a smaller or non-numeric value stops with a clear error. `--width` without `--table` is ignored.
+- The columns share the width by one rule: Title, Artist and Genre / Mood start narrow, and Why takes what is left, up to its longest reason. Any spare space goes to Genre / Mood, then to Title and Artist. At 70 columns and up no word is cut in half. Below that, long words are cut.
+
+**Real output** of `python -m src.main pop/happy --table` (width 100):
+
+```
+Loaded songs: 20
+================================================================
+ Top 5 recommendations for profile: pop/happy
+ Targets: genre=pop, mood=happy, energy=0.80, valence=0.80
+================================================================
+
++------+---------+---------+----------+-------+----------------------------------------------------+
+| Rank | Title   | Artist  | Genre /  | Score | Why                                                |
+|      |         |         | Mood     |       |                                                    |
++======+=========+=========+==========+=======+====================================================+
+|    1 | Sunrise | Neon    | pop      |  7.95 | - energy 0.82 vs target 0.80 (+3.99)               |
+|      | City    | Echo    | happy    |       | - mood match: happy (+2.00)                        |
+|      |         |         |          |       | - valence 0.84 vs target 0.80 (+0.96)              |
+|      |         |         |          |       | - genre match: pop (+1.00)                         |
++------+---------+---------+----------+-------+----------------------------------------------------+
+|    2 | Rooftop | Indigo  | indie    |  6.94 | - energy 0.76 vs target 0.80 (+3.95)               |
+|      | Lights  | Parade  | pop      |       | - mood match: happy (+2.00)                        |
+|      |         |         | happy    |       | - valence 0.81 vs target 0.80 (+0.99)              |
++------+---------+---------+----------+-------+----------------------------------------------------+
+|    3 | Sabor   | Marisol | latin    |  5.90 | - energy 0.80 vs target 0.80 (+4.00)               |
+|      | de      | Vega    | playful  |       | - similar mood: playful is close to happy (+1.00)  |
+|      | Noche   |         |          |       | - valence 0.90 vs target 0.80 (+0.90)              |
++------+---------+---------+----------+-------+----------------------------------------------------+
+|    4 | Pulse   | Kinetic | edm      |  5.48 | - energy 0.92 vs target 0.80 (+3.56)               |
+|      | Garden  | Bloom   | euphoric |       | - similar mood: euphoric is close to happy (+1.00) |
+|      |         |         |          |       | - valence 0.88 vs target 0.80 (+0.92)              |
++------+---------+---------+----------+-------+----------------------------------------------------+
+|    5 | Gym     | Max     | pop      |  5.46 | - energy 0.93 vs target 0.80 (+3.49)               |
+|      | Hero    | Pulse   | intense  |       | - valence 0.77 vs target 0.80 (+0.97)              |
+|      |         |         |          |       | - genre match: pop (+1.00)                         |
++------+---------+---------+----------+-------+----------------------------------------------------+
+```
+
+**Real output** of `python -m src.main lofi/chill --table --diverse` (width 100). The diversity penalty shows up as a reason, and long reasons wrap:
+
+```
+Loaded songs: 20
+================================================================
+ Top 5 recommendations for profile: lofi/chill
+ Diversity: on (artist -1.00, genre -0.50)
+ Targets: genre=lofi, mood=chill, energy=0.40, valence=0.60
+================================================================
+
++------+-----------+----------+----------+-------+-------------------------------------------------+
+| Rank | Title     | Artist   | Genre /  | Score | Why                                             |
+|      |           |          | Mood     |       |                                                 |
++======+===========+==========+==========+=======+=================================================+
+|    1 | Midnight  | LoRoom   | lofi     |  7.95 | - energy 0.42 vs target 0.40 (+3.99)            |
+|      | Coding    |          | chill    |       | - mood match: chill (+2.00)                     |
+|      |           |          |          |       | - valence 0.56 vs target 0.60 (+0.96)           |
+|      |           |          |          |       | - genre match: lofi (+1.00)                     |
++------+-----------+----------+----------+-------+-------------------------------------------------+
+|    2 | Library   | Paper    | lofi     |  7.42 | - energy 0.35 vs target 0.40 (+3.92)            |
+|      | Rain      | Lanterns | chill    |       | - mood match: chill (+2.00)                     |
+|      |           |          |          |       | - valence 0.60 vs target 0.60 (+1.00)           |
+|      |           |          |          |       | - genre match: lofi (+1.00)                     |
+|      |           |          |          |       | - diversity penalty: genre lofi already         |
+|      |           |          |          |       |   recommended (-0.50)                           |
++------+-----------+----------+----------+-------+-------------------------------------------------+
+|    3 | Spacewalk | Orbit    | ambient  |  6.51 | - energy 0.28 vs target 0.40 (+3.56)            |
+|      | Thoughts  | Bloom    | chill    |       | - mood match: chill (+2.00)                     |
+|      |           |          |          |       | - valence 0.65 vs target 0.60 (+0.95)           |
++------+-----------+----------+----------+-------+-------------------------------------------------+
+|    4 | Coffee    | Slow     | jazz     |  5.86 | - energy 0.37 vs target 0.40 (+3.97)            |
+|      | Shop      | Stereo   | relaxed  |       | - similar mood: relaxed is close to chill       |
+|      | Stories   |          |          |       |   (+1.00)                                       |
+|      |           |          |          |       | - valence 0.71 vs target 0.60 (+0.89)           |
++------+-----------+----------+----------+-------+-------------------------------------------------+
+|    5 | Hazy      | Glass    | shoegaze |  5.41 | - energy 0.52 vs target 0.40 (+3.56)            |
+|      | Static    | Orchard  | dreamy   |       | - similar mood: dreamy is close to chill        |
+|      |           |          |          |       |   (+1.00)                                       |
+|      |           |          |          |       | - valence 0.45 vs target 0.60 (+0.85)           |
++------+-----------+----------+----------+-------+-------------------------------------------------+
+```
+
+**Real output** of `python -m src.main ext-90s-nostalgia --table --width 70`. At 70 columns the Why column is narrow, so each reason wraps onto several lines:
+
+```
+Loaded songs: 20
+================================================================
+ Top 5 recommendations for profile: ext-90s-nostalgia
+ Targets: genre=country, mood=nostalgic, energy=0.55, valence=0.65, mood_tags=nostalgic|warm|sentimental, decade=1990
+================================================================
+
++------+--------+---------+-----------+-------+----------------------+
+| Rank | Title  | Artist  | Genre /   | Score | Why                  |
+|      |        |         | Mood      |       |                      |
++======+========+=========+===========+=======+======================+
+|    1 | Dust   | Hollow  | country   | 10.49 | - energy 0.55 vs     |
+|      | Road   | Pines   | nostalgic |       |   target 0.55        |
+|      | Home   |         |           |       |   (+4.00)            |
+|      |        |         |           |       | - mood match:        |
+|      |        |         |           |       |   nostalgic (+2.00)  |
+|      |        |         |           |       | - valence 0.66 vs    |
+|      |        |         |           |       |   target 0.65        |
+|      |        |         |           |       |   (+0.99)            |
+|      |        |         |           |       | - genre match:       |
+|      |        |         |           |       |   country (+1.00)    |
+|      |        |         |           |       | - mood tags matched  |
+|      |        |         |           |       |   3 of 3 requested:  |
+|      |        |         |           |       |   nostalgic, warm,   |
+|      |        |         |           |       |   sentimental        |
+|      |        |         |           |       |   (+1.50)            |
+|      |        |         |           |       | - decade 1990s vs    |
+|      |        |         |           |       |   target 1990s       |
+|      |        |         |           |       |   (+1.00)            |
++------+--------+---------+-----------+-------+----------------------+
+|    2 | Velvet | Luna    | r&b       |  6.32 | - energy 0.48 vs     |
+|      | Hours  | Marsh   | romantic  |       |   target 0.55        |
+|      |        |         |           |       |   (+3.85)            |
+|      |        |         |           |       | - valence 0.62 vs    |
+|      |        |         |           |       |   target 0.65        |
+|      |        |         |           |       |   (+0.97)            |
+|      |        |         |           |       | - mood tags matched  |
+|      |        |         |           |       |   1 of 3 requested:  |
+|      |        |         |           |       |   warm (+0.50)       |
+|      |        |         |           |       | - decade 1990s vs    |
+|      |        |         |           |       |   target 1990s       |
+|      |        |         |           |       |   (+1.00)            |
++------+--------+---------+-----------+-------+----------------------+
+|    3 | Hazy   | Glass   | shoegaze  |  6.27 | - energy 0.52 vs     |
+|      | Static | Orchard | dreamy    |       |   target 0.55        |
+|      |        |         |           |       |   (+3.97)            |
+|      |        |         |           |       | - valence 0.45 vs    |
+|      |        |         |           |       |   target 0.65        |
+|      |        |         |           |       |   (+0.80)            |
+|      |        |         |           |       | - mood tags matched  |
+|      |        |         |           |       |   1 of 3 requested:  |
+|      |        |         |           |       |   nostalgic (+0.50)  |
+|      |        |         |           |       | - decade 1990s vs    |
+|      |        |         |           |       |   target 1990s       |
+|      |        |         |           |       |   (+1.00)            |
++------+--------+---------+-----------+-------+----------------------+
+|    4 | Island | Sol     | reggae    |  6.06 | - energy 0.58 vs     |
+|      | Breeze | Rivera  | uplifting |       |   target 0.55        |
+|      |        |         |           |       |   (+3.97)            |
+|      |        |         |           |       | - valence 0.86 vs    |
+|      |        |         |           |       |   target 0.65        |
+|      |        |         |           |       |   (+0.79)            |
+|      |        |         |           |       | - mood tags matched  |
+|      |        |         |           |       |   1 of 3 requested:  |
+|      |        |         |           |       |   warm (+0.50)       |
+|      |        |         |           |       | - decade 1980s vs    |
+|      |        |         |           |       |   target 1990s       |
+|      |        |         |           |       |   (+0.80)            |
++------+--------+---------+-----------+-------+----------------------+
+|    5 | Paper  | Willow  | folk      |  6.05 | - energy 0.33 vs     |
+|      | Boats  | & Ash   | wistful   |       |   target 0.55        |
+|      |        |         |           |       |   (+2.72)            |
+|      |        |         |           |       | - similar mood:      |
+|      |        |         |           |       |   wistful is close   |
+|      |        |         |           |       |   to nostalgic       |
+|      |        |         |           |       |   (+1.00)            |
+|      |        |         |           |       | - valence 0.38 vs    |
+|      |        |         |           |       |   target 0.65        |
+|      |        |         |           |       |   (+0.73)            |
+|      |        |         |           |       | - mood tags matched  |
+|      |        |         |           |       |   2 of 3 requested:  |
+|      |        |         |           |       |   warm, sentimental  |
+|      |        |         |           |       |   (+1.00)            |
+|      |        |         |           |       | - decade 1970s vs    |
+|      |        |         |           |       |   target 1990s       |
+|      |        |         |           |       |   (+0.60)            |
++------+--------+---------+-----------+-------+----------------------+
+```
+
+**Is it better than the list view?** For comparing songs, yes. You can read the ranks, scores and genres down a column, and the rows line up. This works well at 80 columns and up. For reading the explanations, it is about the same as the list view, because the reasons are the same text. At 70 columns the table is longer than the list, and under 70 it gets hard to read.
+
+**Honest limits.**
+
+- It is made for terminals 80 columns wide or more. Below 70 columns the reasons wrap into many narrow lines, and at 60 and 61 columns some long words are cut in the middle (I checked all 20 profiles, 4 modes, with diversity on and off: some reasons are cut at 60 and 61 columns, none from 70).
+- A `|` inside a title, artist or reason looks like a column separator. The line stays the same length, but the picture is misleading. The catalog has no such text.
+- Wide characters (Chinese, Japanese, emoji) count as two columns, and accents and zero-width characters count as zero. Emoji joined with a zero-width joiner (family or flag sequences) are not handled. I did not check how real terminals draw CJK or emoji text.
+- A score of 12345 or more at width 60 stops with a "too small" error that does not say the score is the cause. The highest real score in this project is about 11.
+- Reasons are split on `"; "`. A reason that contains `"; "` would show as two bullets. No current reason does.
+- `--width` without `--table` is ignored.
+- Piping to `head` (for example `python -m src.main all --table | head`) can print a `BrokenPipeError`. This is normal behavior of Python's `print`, not a table bug.

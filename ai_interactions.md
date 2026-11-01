@@ -171,6 +171,49 @@ I prototyped the work on a branch called `challenge-3-diversity`. After the chec
 
 ---
 
+## Challenge 4: Visual Summary Table
+
+**What task did you give the agent?**
+
+The challenge was "Visual Summary Table": show the top recommendations as a formatted table in the terminal, with the reasons for each score. I used the same three agent roles as before and did the git work and the checks myself:
+
+- Agent A built it.
+- Agent B reviewed A's work, read-only, and ran its own checker.
+- Agent C fixed B's findings and updated the docs and this log.
+
+I worked on a branch called `challenge-4-table`.
+
+**Prompts used:**
+
+- To Agent A (shortened): "Suggest and implement a way to display the top recommendations as a formatted table in the terminal, using a library like tabulate or simple ASCII formatting. The table MUST include the reasons for each score, not only the score." I also said it must be opt-in (a flag), the default output must stay byte-for-byte the same, and it should compare `tabulate` with plain ASCII before choosing.
+- Shared rule for all agents (same as before): "Default behavior must stay exactly the same. A regression guard compares the top 5 and the scores of the original 10 profiles and the CLI output of `all` and `adversarial` against saved files. New options are extras. Do not run git add, commit, or reset."
+- To Agent B (shortened): "Review A's work read-only. Write your own checker that runs the real CLI over many profiles, modes and widths. Check that the default output did not change. Run mutations on a copy of the repo."
+- To Agent C (shortened): "Fix the crash on a whitespace-only field. Add the missing tests (right alignment of Score and Rank, the blank line before the table, a minimum share for the Why column, exact text checks) and run at least 8 mutations on a copy. Adopt B's better column layout, but output at 80 columns and up must not change. Treat zero-width characters as width 0. Rename the shadowed function in `main.py`. Then update the README, the model card and this log. Document what is not fixed."
+
+**What did the agent generate or change?**
+
+- `src/table.py` (new): `format_table(recommendations, width=100)`. It is plain ASCII and uses only the standard library. It has its own word wrapper that counts wide characters as 2 columns, and it picks the column widths. Every reason is on its own `- ` bullet line, and long ones wrap with an indent.
+- `src/main.py`: a `--table` flag and a `--width N` flag (default 100, minimum 60). Without `--table`, the output is unchanged.
+- `tests/test_table.py` (new): 39 test cases from Agent A, then 125 in total after Agent C (735 test cases in the whole project, by `pytest --collect-only -q`).
+- `tabulate` is not installed here and is not in `requirements.txt`. Agent A compared it with a hand-written ASCII helper and chose the helper: no dependency, full control over how reasons wrap, and a pure function that is easy to test. `requirements.txt` did not change.
+- `README.md` (new Challenge 4 subsection, run commands, test counts), `model_card.md`, and this file.
+
+**What did you verify or fix manually?**
+
+- **Guard and tests.** I re-ran the regression guard and `pytest` myself after each stage. The default output of the original 10 profiles and of `all` and `adversarial` is unchanged. I also looked at the real tables.
+- **Agent B's checker.** B wrote an independent checker that ran the real CLI 896 times (20 profiles, 4 modes, diversity on and off, 8 widths). Every table line had the same length and fit the width. Only plain ASCII was used. Every reason appeared in full as its own bullet group. In 170 default-output runs, the output was byte-identical to the commit before the change. Agent C re-ran this checker after the layout change: 896 runs, 0 problems.
+- **B's mutations.** B ran 34 mutations on a copy, and 8 survived. They pointed to gaps in my tests: nothing pinned the right alignment of Score and Rank, the blank line before the table, a minimum share for the Why column, or the exact text of title, artist, genre and mood (the checks ignored spaces, so a cut word could pass).
+- **A crash.** B found that a title, artist, genre or mood that is only spaces crashed `format_table` with `ValueError: max() iterable argument is empty`. Agent C fixed it. Agent C added tests for empty and whitespace-only values in each field (in a table with other songs and in a table with only that song). A first test with other songs in the table did not catch the crash when I mutated it back, because the column was never empty. Only the single-song test caught it.
+- **A false claim.** Agent A wrote that the Why column gets at least half of the free width. B showed that this is false at widths 60 to about 65. Agent C removed the claim.
+- **Layout change.** B tried a different way to share the width. Words stay whole first, Why takes what is left, and spare width goes to the other columns. B measured that words cut in Title and Artist at width 70 fell from 49 to 0, and at width 60 from 51 to 39. The total table height at 70 columns grew from 644 to 806 lines. Agent C ported the idea into `src/table.py`. The first port changed the output at 80 columns and up, because it handed the spare width out in a different order and dropped the minimum column widths. Agent C fixed that. Then I compared the real CLI output before and after the change for all profiles, 4 modes, diversity on and off, and widths 80, 90, 100, 120, 140 and 200 (78 files in all). All were identical. Only tables below 80 columns changed. After the change, there are 0 cut words at width 70 (I counted words of titles and artists), and 0 cut reasons from 70 up.
+- **Mutations by Agent C.** Agent C ran 33 mutations on a copy of the repo (never the real one): Score and Rank alignment flipped (and each one alone), `WHY_SHARE` changed (0.3 and 0.7), the blank line before and after the table removed, the last reason dropped, the width off by one (both ways), the `=` rule removed, the CLI ignoring `--table`, the CLI ignoring `--width`, the width minimum removed (in `table.py` and in the CLI), a changed default width, a zero-width joiner and ESC counted as width 1, the wrapper using `<` instead of `<=`, the bullet missing, and a few more in the width rule. On the first run, 7 survived. Two of those needed hand-made cases, because on the real profiles they give the same output: a case where the columns must go below their minimum widths, and one where very long words force Title and Artist down. I added tests for all of them, and the final run killed all 33. I also pinned the exact column widths of several real profiles at widths 60, 70, 80 and 100.
+- **Zero-width characters.** The width function now counts combining marks, format characters (such as the zero-width joiner) and ESC as 0 columns, with a test.
+- **Small cleanups.** I renamed the `table_width` function in `main.py`, because the `print_recommendations` parameter has the same name. `format_table` has a one-line docstring, `table_width` is typed `Optional[int]`, the "too small" check comes first in `column_widths`, and the long lines are wrapped.
+- **Skipped on purpose.** The header "Genre / Mood" always wraps to two lines. I accepted this. I also did not fix the problems below. I wrote them in the README limits list: a `|` inside a cell looks like a column separator (the line length stays right); a score of 12345 or more at width 60 gives a misleading "too small" error; zero-width-joiner emoji sequences are not handled; I did not check how real terminals draw CJK or emoji text; reasons are split on `"; "`; `--width` without `--table` is ignored; and piping to `head` can raise a `BrokenPipeError`, which is normal for `print`.
+- **Docs.** I searched README.md and model_card.md for the old test counts ("610", "95 test functions") and the run-command list. I used the real counts (735 in all) and added the new test file to the test description. I did not call the table better than the list for everything. It is easier for comparing songs at 80 columns and up, and about the same for reading the reasons.
+
+---
+
 ## Design Pattern (SF10)
 
 > Document how AI helped you choose or implement a design pattern.

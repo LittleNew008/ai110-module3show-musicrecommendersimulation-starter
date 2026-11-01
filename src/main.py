@@ -10,15 +10,19 @@ Usage (from the project root):
     python -m src.main pop/happy --mode mood-first   # rank with another scoring mode
     python -m src.main --list-modes                  # show the scoring modes
     python -m src.main lofi/chill --diverse          # penalize repeated artists and genres in the top 5
+    python -m src.main pop/happy --table             # show the top 5 as a table, with the reasons for each score
+    python -m src.main all --table --width 80        # same, wrapped to 80 columns (default 100, minimum 60)
 """
 
 import argparse
 import sys
+from typing import Optional
 
 from src.recommender import (
     ARTIST_PENALTY, DEFAULT_MODE, EXTENSION_KEYS, GENRE_PENALTY, MODES,
     load_songs, recommend_songs, resolve_mode,
 )
+from src.table import DEFAULT_WIDTH, MIN_WIDTH, format_table
 
 PROFILES = {
     "pop/happy": {
@@ -117,7 +121,8 @@ WIDTH = 64
 
 
 def print_recommendations(
-    profile_name: str, user_prefs: dict, recommendations: list, mode_name: str = DEFAULT_MODE, diverse: bool = False
+    profile_name: str, user_prefs: dict, recommendations: list, mode_name: str = DEFAULT_MODE, diverse: bool = False,
+    table_width: Optional[int] = None,
 ) -> None:
     print("=" * WIDTH)
     print(f" Top {len(recommendations)} recommendations for profile: {profile_name}")
@@ -141,6 +146,12 @@ def print_recommendations(
     print(f" Targets: {targets}")
     print("=" * WIDTH)
 
+    if table_width is not None:
+        print()
+        print(format_table(recommendations, table_width))
+        print()
+        return
+
     for rank, (song, score, explanation) in enumerate(recommendations, start=1):
         print(f"\n{rank}. {song['title']} by {song['artist']}")
         print(f"   Score: {score:.2f}   ({song['genre']}, {song['mood']})")
@@ -160,6 +171,17 @@ def print_modes() -> None:
         )
 
 
+def width_arg(text: str) -> int:
+    """argparse type for --width: a whole number of at least MIN_WIDTH."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid width {text!r}: must be a whole number of at least {MIN_WIDTH}")
+    if value < MIN_WIDTH:
+        raise argparse.ArgumentTypeError(f"width {value} is too small: must be at least {MIN_WIDTH}")
+    return value
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(prog="python -m src.main", description="Music Recommender Simulation")
     parser.add_argument(
@@ -171,6 +193,13 @@ def main(argv=None) -> None:
     parser.add_argument(
         "--diverse", action="store_true",
         help=f"penalize repeated artists (-{ARTIST_PENALTY:.2f}) and genres (-{GENRE_PENALTY:.2f}) in the top results",
+    )
+    parser.add_argument(
+        "--table", action="store_true", help="show each profile's results as a table that includes the reasons"
+    )
+    parser.add_argument(
+        "--width", type=width_arg, default=DEFAULT_WIDTH, metavar="N",
+        help=f"table width in columns, used with --table (default: {DEFAULT_WIDTH}, minimum: {MIN_WIDTH})",
     )
     args = parser.parse_args(argv)
 
@@ -204,7 +233,9 @@ def main(argv=None) -> None:
     for profile_name in profile_names:
         user_prefs = ALL_PROFILES[profile_name]
         recommendations = recommend_songs(user_prefs, songs, k=5, mode=mode, **penalties)
-        print_recommendations(profile_name, user_prefs, recommendations, mode.name, args.diverse)
+        print_recommendations(
+            profile_name, user_prefs, recommendations, mode.name, args.diverse, args.width if args.table else None
+        )
 
 
 if __name__ == "__main__":
