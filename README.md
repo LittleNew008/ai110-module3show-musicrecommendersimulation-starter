@@ -17,17 +17,32 @@ Replace this paragraph with your own summary of what your version does.
 
 ## How The System Works
 
-Explain your design in plain language.
+Real-world platforms like Spotify and YouTube combine two ideas. **Collaborative filtering** learns from other users' behavior (plays, skips, likes, playlist co-occurrence) to find songs that people with similar taste enjoyed. **Content-based filtering** looks at the songs themselves (genre, tempo, energy, mood) and recommends items similar to what a user already likes. Production systems blend both, then rank a large candidate pool using many signals. This simulation has no listening history, so it is a **content-based recommender**: it compares each song's attributes to a user's stated taste profile. It prioritizes **how close a song's energy is to the user's target** (the strongest and cleanest signal in the catalog), then **mood match** (the closest thing to a "vibe" label), with **genre** as a smaller nudge and **valence** as an optional refinement. Numeric features reward *closeness* to the user's target, not simply higher or lower values.
 
-Some prompts to answer:
+### Song features
 
-- What features does each `Song` use in your system
-  - For example: genre, mood, energy, tempo
-- What information does your `UserProfile` store
-- How does your `Recommender` compute a score for each song
-- How do you choose which songs to recommend
+Each `Song` stores: `id`, `title`, `artist`, `genre`, `mood`, `energy`, `tempo_bpm`, `valence`, `danceability`, `acousticness`.
 
-You can include a simple diagram or bullet list if helpful.
+Used in scoring: `energy`, `mood`, `genre`, and `valence`. The rest are kept for display and future experiments. `tempo_bpm`, `danceability`, and `acousticness` are left out of the core score because they correlate strongly with energy in this catalog (r = 0.96, 0.86, and -0.99), so including them would mostly count the same signal several times.
+
+### UserProfile features
+
+Each `UserProfile` stores: `favorite_genre`, `favorite_mood`, `target_energy`, `likes_acoustic`. A `target_valence` field is planned as an optional addition for the valence term.
+
+### Scoring and ranking
+
+**Scoring rule (one song):**
+
+```
+score = 3.0 * (1 - |song.energy  - target_energy|)
+      + 2.0 * (1 if song.mood  == favorite_mood  else 0)
+      + 1.0 * (1 - |song.valence - target_valence|)   # only if the user has a valence target
+      + 1.0 * (1 if song.genre == favorite_genre else 0)
+```
+
+The maximum score is 7.0. Mood is weighted above genre because the catalog has few songs per genre, so a genre match would otherwise override a better mood and energy fit.
+
+**Ranking rule (the whole list):** score every song, sort by score descending (ties broken by energy closeness, then title), and return the top `k`. Scoring judges one song in isolation, while ranking turns those scores into an ordered list, so the two are kept separate.
 
 ---
 
