@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, asdict
 import math
 import re
 
-# Algorithm Recipe weights (maximum score is 8.0)
+# Algorithm Recipe weights for the default (balanced) mode (base maximum score is 8.0)
 ENERGY_WEIGHT = 4.0
 MOOD_WEIGHT = 2.0
 VALENCE_WEIGHT = 1.0
@@ -21,6 +21,60 @@ POPULARITY_WEIGHT = 1.0
 INSTRUMENTALNESS_WEIGHT = 0.5
 SPEECHINESS_WEIGHT = 0.5
 LANGUAGE_WEIGHT = 0.5
+
+@dataclass(frozen=True)
+class ScoringMode:
+    """A named set of weights for the four base terms; each mode's base maximum is the sum of its weights."""
+    name: str
+    description: str
+    energy_weight: float
+    mood_weight: float
+    valence_weight: float
+    genre_weight: float
+    energy_sigma: float = ENERGY_SIGMA
+    partial_mood_credit: float = PARTIAL_MOOD_CREDIT
+
+    def __post_init__(self):
+        weights = (self.energy_weight, self.mood_weight, self.valence_weight, self.genre_weight)
+        if not all(math.isfinite(w) and w >= 0 for w in weights):
+            raise ValueError(f"mode {self.name!r}: weights must be finite numbers >= 0, got {weights}")
+        if not (math.isfinite(self.energy_sigma) and self.energy_sigma > 0):
+            raise ValueError(f"mode {self.name!r}: energy_sigma must be a finite number > 0, got {self.energy_sigma!r}")
+        if not 0 <= self.partial_mood_credit <= 1:
+            raise ValueError(f"mode {self.name!r}: partial_mood_credit must be between 0 and 1, got {self.partial_mood_credit!r}")
+
+    @property
+    def max_score(self) -> float:
+        """Highest base score a song can earn in this mode (extension terms are extra)."""
+        return self.energy_weight + self.mood_weight + self.valence_weight + self.genre_weight
+
+# Scoring modes: add a new mode by adding one entry here. Every mode's weights sum to 8.0,
+# so base scores stay on the same scale. "balanced" is the default and uses the constants above.
+DEFAULT_MODE = "balanced"
+MODES: Dict[str, ScoringMode] = {
+    mode.name: mode
+    for mode in (
+        ScoringMode("balanced", "Standard recipe: energy first, then mood, valence and genre.",
+                    ENERGY_WEIGHT, MOOD_WEIGHT, VALENCE_WEIGHT, GENRE_WEIGHT),
+        ScoringMode("genre-first", "The genre label dominates, with energy and mood in supporting roles.",
+                    energy_weight=2.0, mood_weight=1.5, valence_weight=0.5, genre_weight=4.0),
+        ScoringMode("mood-first", "The mood label dominates, with energy as the second voice.",
+                    energy_weight=2.0, mood_weight=4.0, valence_weight=1.0, genre_weight=1.0),
+        ScoringMode("energy-focused", "Energy closeness is almost the whole score.",
+                    energy_weight=5.5, mood_weight=1.0, valence_weight=1.0, genre_weight=0.5),
+    )
+}
+
+def resolve_mode(mode=None) -> ScoringMode:
+    """Turn None, a mode name or a ScoringMode into a ScoringMode; raise ValueError for an unknown name."""
+    if mode is None:
+        return MODES[DEFAULT_MODE]
+    if isinstance(mode, ScoringMode):
+        return mode
+    name = str(mode).strip().lower()
+    if name not in MODES:
+        raise ValueError(f"unknown mode {mode!r}. Valid modes: {', '.join(MODES)}")
+    return MODES[name]
 
 MOOD_CLUSTERS = [
     {"chill", "relaxed", "focused", "dreamy"},
@@ -77,8 +131,9 @@ class Recommender:
     OOP implementation of the recommendation logic.
     Required by tests/test_recommender.py
     """
-    def __init__(self, songs: List[Song]):
+    def __init__(self, songs: List[Song], mode=None):
         self.songs = songs
+        self.mode = resolve_mode(mode)
 
     @staticmethod
     def _prefs(user: UserProfile) -> Dict:
@@ -99,12 +154,12 @@ class Recommender:
         """Return the top k songs for the user, best first, reusing recommend_songs."""
         by_id = {song.id: song for song in self.songs}
         rows = [asdict(song) for song in self.songs]
-        ranked = recommend_songs(self._prefs(user), rows, k)
+        ranked = recommend_songs(self._prefs(user), rows, k, self.mode)
         return [by_id[row["id"]] for row, _, _ in ranked]
 
     def explain_recommendation(self, user: UserProfile, song: Song) -> str:
         """Explain why a song fits the user, reusing the reasons from score_song."""
-        _, reasons = score_song(self._prefs(user), asdict(song))
+        _, reasons = score_song(self._prefs(user), asdict(song), self.mode)
         return "; ".join(reasons) or "No preferences were given, so this song was not scored."
 
 def load_songs(csv_path: str) -> List[Dict]:
@@ -199,8 +254,9 @@ def clean_prefs(user_prefs: Dict) -> Dict:
         )
     return cleaned
 
-def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
+def score_song(user_prefs: Dict, song: Dict, mode=None) -> Tuple[float, List[str]]:
     """Score one song against user preferences, returning (score, list of reasons)."""
+    mode = resolve_mode(mode)
     user_prefs = clean_prefs(user_prefs)
     score = 0.0
     reasons: List[str] = []
@@ -208,7 +264,7 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
     target_energy = user_prefs.get("energy")
     if target_energy is not None:
         gap = abs(song["energy"] - target_energy)
-        points = ENERGY_WEIGHT * math.exp(-(gap ** 2) / (2 * ENERGY_SIGMA ** 2))
+        points = mode.energy_weight * math.exp(-(gap ** 2) / (2 * mode.energy_sigma ** 2))
         score += points
         reasons.append(
             f"energy {song['energy']:.2f} vs target {target_energy:.2f} (+{points:.2f})"
@@ -217,10 +273,10 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
     user_mood = user_prefs.get("mood")
     if user_mood is not None:
         if song["mood"] == user_mood:
-            score += MOOD_WEIGHT
-            reasons.append(f"mood match: {song['mood']} (+{MOOD_WEIGHT:.2f})")
+            score += mode.mood_weight
+            reasons.append(f"mood match: {song['mood']} (+{mode.mood_weight:.2f})")
         elif any(user_mood in c and song["mood"] in c for c in MOOD_CLUSTERS):
-            points = MOOD_WEIGHT * PARTIAL_MOOD_CREDIT
+            points = mode.mood_weight * mode.partial_mood_credit
             score += points
             reasons.append(
                 f"similar mood: {song['mood']} is close to {user_mood} (+{points:.2f})"
@@ -228,15 +284,15 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
 
     target_valence = user_prefs.get("valence")
     if target_valence is not None:
-        points = VALENCE_WEIGHT * (1 - abs(song["valence"] - target_valence))
+        points = mode.valence_weight * (1 - abs(song["valence"] - target_valence))
         score += points
         reasons.append(
             f"valence {song['valence']:.2f} vs target {target_valence:.2f} (+{points:.2f})"
         )
 
     if song["genre"] == user_prefs.get("genre"):
-        score += GENRE_WEIGHT
-        reasons.append(f"genre match: {song['genre']} (+{GENRE_WEIGHT:.2f})")
+        score += mode.genre_weight
+        reasons.append(f"genre match: {song['genre']} (+{mode.genre_weight:.2f})")
 
     # Extension terms: skipped when the profile lacks the key or the song lacks the field
     wanted_tags = user_prefs.get("mood_tags")
@@ -287,10 +343,11 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
 
     return score, reasons
 
-def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5) -> List[Tuple[Dict, float, str]]:
+def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5, mode=None) -> List[Tuple[Dict, float, str]]:
     """Score every song and return the top k as (song, score, explanation), best first."""
+    mode = resolve_mode(mode)
     prefs = clean_prefs(user_prefs)
-    scored = [(song, *score_song(prefs, song)) for song in songs]
+    scored = [(song, *score_song(prefs, song, mode)) for song in songs]
     target_energy = prefs.get("energy")
 
     def rank_key(item):

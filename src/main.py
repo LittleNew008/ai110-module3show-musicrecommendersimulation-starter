@@ -7,11 +7,16 @@ Usage (from the project root):
     python -m src.main all          # run every profile in PROFILES
     python -m src.main adversarial  # run the edge-case profiles
     python -m src.main extensions   # run the profiles that use the extra song attributes
+    python -m src.main pop/happy --mode mood-first   # rank with another scoring mode
+    python -m src.main --list-modes                  # show the scoring modes
 """
 
+import argparse
 import sys
 
-from src.recommender import EXTENSION_KEYS, load_songs, recommend_songs
+from src.recommender import (
+    DEFAULT_MODE, EXTENSION_KEYS, MODES, load_songs, recommend_songs, resolve_mode,
+)
 
 PROFILES = {
     "pop/happy": {
@@ -109,9 +114,11 @@ DEFAULT_PROFILE = "pop/happy"
 WIDTH = 64
 
 
-def print_recommendations(profile_name: str, user_prefs: dict, recommendations: list) -> None:
+def print_recommendations(profile_name: str, user_prefs: dict, recommendations: list, mode_name: str = DEFAULT_MODE) -> None:
     print("=" * WIDTH)
     print(f" Top {len(recommendations)} recommendations for profile: {profile_name}")
+    if mode_name != DEFAULT_MODE:
+        print(f" Mode: {mode_name}")
     targets = ", ".join(
         f"{key}={user_prefs[key]:.2f}" if isinstance(user_prefs[key], float) else f"{key}={user_prefs[key]}"
         for key in ("genre", "mood", "energy", "valence")
@@ -137,8 +144,31 @@ def print_recommendations(profile_name: str, user_prefs: dict, recommendations: 
     print()
 
 
-def main() -> None:
-    arg = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PROFILE
+def print_modes() -> None:
+    for mode in MODES.values():
+        default = " (default)" if mode.name == DEFAULT_MODE else ""
+        print(f"{mode.name}{default}: {mode.description}")
+        print(
+            f"    energy {mode.energy_weight:g}, mood {mode.mood_weight:g}, "
+            f"valence {mode.valence_weight:g}, genre {mode.genre_weight:g} (base max {mode.max_score:g})"
+        )
+
+
+def main(argv=None) -> None:
+    parser = argparse.ArgumentParser(prog="python -m src.main", description="Music Recommender Simulation")
+    parser.add_argument(
+        "profile", nargs="?", default=DEFAULT_PROFILE,
+        help=f"a profile name, or all, adversarial, extensions (default: {DEFAULT_PROFILE})",
+    )
+    parser.add_argument("--mode", metavar="MODE", help=f"scoring mode: {', '.join(MODES)} (default: {DEFAULT_MODE})")
+    parser.add_argument("--list-modes", action="store_true", help="show the scoring modes and exit")
+    args = parser.parse_args(argv)
+
+    if args.list_modes:
+        print_modes()
+        return
+
+    arg = args.profile
     if arg == "all":
         profile_names = list(PROFILES)
     elif arg == "adversarial":
@@ -151,14 +181,18 @@ def main() -> None:
         sys.exit(
             f"Unknown profile '{arg}'. Choose from: all, adversarial, extensions, {', '.join(ALL_PROFILES)}"
         )
+    try:
+        mode = resolve_mode(args.mode)
+    except ValueError as error:
+        parser.error(str(error))
 
     songs = load_songs("data/songs.csv")
     print(f"Loaded songs: {len(songs)}")
 
     for profile_name in profile_names:
         user_prefs = ALL_PROFILES[profile_name]
-        recommendations = recommend_songs(user_prefs, songs, k=5)
-        print_recommendations(profile_name, user_prefs, recommendations)
+        recommendations = recommend_songs(user_prefs, songs, k=5, mode=mode)
+        print_recommendations(profile_name, user_prefs, recommendations, mode.name)
 
 
 if __name__ == "__main__":

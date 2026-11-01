@@ -87,18 +87,73 @@ The challenge was "Add Advanced Song Features": give the songs more attributes a
 
 ---
 
+## Challenge 2: Multiple Scoring Modes
+
+**What task did you give the agent?**
+
+The challenge was "Create Multiple Scoring Modes": let the user pick between named scoring modes, such as genre-first or energy-focused, and show how the rankings change. I used the same three agent roles as in Challenge 1 and did the git work and the checks myself:
+
+- Agent A built it and weighed several designs first.
+- Agent B reviewed A's work, read-only.
+- Agent C fixed B's findings and updated the docs and this log.
+
+I prototyped the work on a branch called `experiment/scoring-modes`. My plan is to merge it into `main` after the checks pass.
+
+**Prompts used:**
+
+- To Agent A (shortened): "Add scoring modes (for example genre-first, mood-first, energy-focused) that change the weights, and let the user choose one from the command line. Before you code, brainstorm at least three designs, compare them, and pick one. The default mode must stay byte-for-byte identical to today's output."
+- Shared rule for all agents (same as Challenge 1): "Default behavior must stay exactly the same. A regression guard compares the top 5 and the scores of the original 10 profiles and the CLI output of `all` and `adversarial` against saved files. New options are extras. Do not run git add, commit, or reset."
+- To Agent B (shortened): "Review A's work read-only. Verify every demo claim by running it. Hand-compute scores in every mode. Run 5 or more mutations on a copy of the repo to see whether the tests notice. Try adding a fifth mode and see what breaks."
+- To Agent C (shortened): "Fix B's findings: pin the weight table and the tie-breaking in tests, make the tests count modes from `MODES`, validate `ScoringMode`, and change the `--list-modes` text to 'base max'. Add the Challenge 2 section to the README, update the model card, and fill in this log."
+
+**What did the agent generate or change?**
+
+- `src/recommender.py`: a frozen dataclass `ScoringMode` (four weights, plus the energy curve width and the partial mood credit), a registry `MODES`, `DEFAULT_MODE`, and `resolve_mode`. `score_song`, `recommend_songs` and `Recommender` take an optional `mode`.
+- Four modes: `balanced` (the default, the original recipe), `genre-first`, `mood-first` and `energy-focused`. Each one has base weights that add up to 8.0.
+- `src/main.py`: `--mode`, `--list-modes`, and `argparse` with an optional profile name.
+- `tests/test_recommender.py`: 40 new test cases from Agent A (85 in total), then 32 more from Agent C (117 in total by `pytest --collect-only -q`).
+- `README.md` (new Challenge 2 subsection, plus "default mode" qualifiers), `model_card.md`, and this file.
+
+**What did you verify or fix manually?**
+
+- **Guard and tests.** I re-ran the regression guard and `pytest` myself after each stage. Default output of the original 10 profiles is unchanged.
+- **Agent B's checks.** B hand-computed 56 scores (7 songs, 4 modes, 2 profiles) and found 0 mismatches. B compared the old and new code on 24,000 profile and song pairs, and all results were identical. B also verified every claim in the demo output.
+- **Surviving mutations.** B ran 22 mutations on a copy, and 5 survived. They pointed to gaps: no test pinned the weights of every mode, that `energy_sigma` and `partial_mood_credit` were not tested, that the tie-break order was not tested, and that the unknown-mode CLI test only checked for a non-zero exit. Agent C added a test of the full weight table, tests with custom `ScoringMode` objects, tests for sorting by score, then energy gap, then title in every mode, and an exact exit code of 2. Then Agent C re-ran 11 mutations on a copy of the repo, including: genre-first energy 2.0 to 2.5, no tie-break, no title tie-break, no gap tie-break, ignoring `energy_sigma`, ignoring the partial mood credit, and an unknown mode that exits 1. The suite caught all 11. The real repo was not mutated.
+- **Hard-coded mode count.** Some tests assumed there were exactly four modes. Agent C made them read `MODES`. As a test, Agent C added a fifth mode with one registry line in a copy of the repo, and the whole suite still passed. The real repo has four modes.
+- **Missing validation.** `ScoringMode` accepted negative or infinite weights. It now raises a `ValueError` for weights that are not finite or are below 0, an `energy_sigma` that is not above 0, and a partial mood credit outside 0 to 1. Zero weights are still allowed.
+- **A misleading "max 8".** Extension profiles can score above 8.0, so `--list-modes` now says "base max 8", and I checked the docstrings.
+- **A command-line change.** The old code printed "Unknown profile" and exited with 1 for any bad word. With `argparse`, an unknown flag or an extra word (such as an unquoted `high-energy pop`) exits with 2. I wrote this down in the README.
+- **Skipped on purpose.** I did not make `str(mode)` stricter, because it only matters for odd input. I left `MODES` as a plain dict. I kept the `energy_sigma` and `partial_mood_credit` fields, because tests now cover them. I let `--list-modes` ignore a bad profile name, because it exits before looking at it.
+- **Docs.** I searched README.md and model_card.md for statements that are true only for the default mode ("maximum score is 8.0", "4.0 of 8.0", the weights table) and added a "default mode" qualifier. I left the history sections as they were. I used the real test counts.
+
+---
+
 ## Design Pattern (SF10)
 
 > Document how AI helped you choose or implement a design pattern.
 
 **Which design pattern did you use?**
 
-<!-- e.g., Strategy, Factory, Observer, etc. -->
+A data-driven Strategy pattern, for the scoring modes. Each mode is a small frozen object that holds the weights (`ScoringMode`). The modes live in a registry (`MODES`). The scoring code is shared, and it reads the weights from the mode it is given.
 
 **How did AI help you brainstorm or implement it?**
 
-<!-- Describe the conversation or suggestions that led to your decision -->
+Before coding, I asked Agent A to weigh at least three designs. It weighed four:
+
+- (a) Each mode as a function or object of its own. It is flexible, but every mode has to rebuild the reasons text, and copied scoring code can drift apart.
+- (b) A frozen dataclass of weights plus a registry dict. The modes are named, interchangeable, and picked at run time. A new mode is one registry entry, and it is easy to test.
+- (c) A subclass of `Recommender` for each mode. It splits one idea across classes, and the function-based API would not see it.
+- (d) An if/elif on a mode name inside `score_song`. It is the simplest, but every new mode means editing the scoring code, and it is hard to test.
+
+Agent A picked (b), because the scoring code is shared and only the numbers differ. Later, Agent B reviewed it and described the limit: it is a parameterized strategy, where data selects the weights and the formulas are shared. That is the right size for four modes, and a fifth mode needs one registry line and no scoring changes. But it cannot change the shape of a term (for example, a straight-line energy term) without code changes, so I did not call it a general strategy in the README. Agent C then checked the "one line" claim by adding a fifth mode to a copy of the repo and running the full suite. It passed.
 
 **How does the pattern appear in your final code?**
 
-<!-- Point to the relevant class or method -->
+In `src/recommender.py`:
+
+- `ScoringMode` is the strategy: a frozen dataclass with the four weights, the energy curve width, the partial mood credit, and a `max_score` property. It checks its own numbers when it is created.
+- `MODES` is the registry (a dict by name), and `DEFAULT_MODE` is `balanced`. A new mode is one new entry.
+- `resolve_mode` turns `None`, a name, or a `ScoringMode` into a `ScoringMode`, and raises a `ValueError` for an unknown name.
+- `score_song` and `recommend_songs` take an optional `mode` argument, and `Recommender(songs, mode=...)` passes it on.
+
+In `src/main.py`, the `--mode` flag picks a mode by name, and `--list-modes` prints the registry.

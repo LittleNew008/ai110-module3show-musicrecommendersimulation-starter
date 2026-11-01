@@ -40,12 +40,14 @@ It does not predict what a person will click or replay. It only matches a stated
 
 VibeCheck is like a judge with a checklist. It scores every song. Then it shows the five best.
 
-Each song can earn up to 8 points from the base terms:
+In the default (balanced) mode, each song can earn up to 8 points from the base terms:
 
 - **Energy: up to 4 points.** The closer a song's energy is to what you want, the more points it gets. A little off loses a little. Far off loses a lot.
 - **Mood: up to 2 points.** An exact match gets 2. A close mood gets 1. For example, "playful" is close to "happy". "Relaxed" is close to "chill".
 - **Sunniness (valence): up to 1 point.** Songs closer to the sunniness you want score higher.
 - **Genre: 1 point.** A song gets it if it matches your favorite genre.
+
+**Scoring modes.** VibeCheck has four modes. Each one is a set of weights for the four base terms above. `balanced` is the default, and every result in this card used it. `genre-first`, `mood-first` and `energy-focused` shift most of the 8 points to one term. They change the order of the lists. They do not change what the system can see. A mode is picked with `--mode` on the command line, or with `mode=` in code. The weights are in the README, under "Challenge 2: Multiple scoring modes".
 
 Genre is worth less than mood on purpose. Most genres have only one song here. A genre tag alone should not beat a song that fits your mood and energy.
 
@@ -90,7 +92,7 @@ The starter code only returned the first few songs and ignored the user. This ve
 - **Comparisons.** I compared profiles in 12 pairs and wrote down what changed and why.
 - **One experiment.** I doubled the energy weight and halved the genre weight. The #1 song stayed the same for all 10 profiles. Below #1, one list got clearly better and two got a little worse. I put the weights back.
 - **A trace.** I worked out, term by term, why Pulse Garden ranks first for "high-energy pop".
-- **Tests.** 45 automated test cases pass (counting each parametrized case). They cover the `Recommender` class (including a test with the songs in reverse order and a check that it matches the function-based version on the real catalog), the input cleaning, and the extension attributes. The original tests do not check exact scores. The extension tests do check hand-computed values for each new term. I checked the base scoring by running profiles and reading the results.
+- **Tests.** 117 automated test cases pass (61 test functions, counting each parametrized case). They cover the `Recommender` class (including a test with the songs in reverse order and a check that it matches the function-based version on the real catalog), the input cleaning, the extension attributes, and the scoring modes. The original tests do not check exact scores. The extension tests do check hand-computed values for each new term, and the mode tests pin every weight. I checked the base scoring by running profiles and reading the results.
 
 The full terminal output for every profile is in the README, under "Stress test: diverse profiles". The details are below.
 
@@ -156,7 +158,7 @@ The profiles are testing what I meant them to: energy separates the listeners mo
 
 - Classroom learning. It shows how a score and a ranking turn data into recommendations.
 - Explaining a recommendation in plain words, one listener at a time.
-- Trying out ideas, such as changing a weight and watching the lists move.
+- Trying out ideas, such as changing a weight (or picking another scoring mode) and watching the lists move.
 
 **It assumes the listener** knows what they want and can name one genre, one mood, and one energy level.
 

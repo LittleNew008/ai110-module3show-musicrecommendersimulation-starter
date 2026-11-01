@@ -1,13 +1,15 @@
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
 from src import recommender
-from src.main import EXTENSION_PROFILES
+from src.main import ADVERSARIAL_PROFILES, EXTENSION_PROFILES, PROFILES
 from src.recommender import (
-    Song, UserProfile, Recommender, clean_prefs, load_songs, recommend_songs, score_song,
+    MODES, ScoringMode, Song, UserProfile, Recommender, clean_prefs, load_songs, recommend_songs,
+    resolve_mode, score_song,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -439,3 +441,299 @@ def test_extensions_cli_keyword_prints_every_extension_profile():
     assert "Loaded songs: 20" in result.stdout
     for name in EXTENSION_PROFILES:
         assert f"for profile: {name}" in result.stdout
+
+
+# --- Scoring modes ---
+
+BASE_PROFILES = {**PROFILES, **ADVERSARIAL_PROFILES}
+NON_DEFAULT_MODES = [name for name in MODES if name != "balanced"]
+
+
+def titles(prefs, mode=None, k=5):
+    return [song["title"] for song, _, _ in recommend_songs(prefs, load_songs("data/songs.csv"), k, mode)]
+
+
+@pytest.mark.parametrize("name", list(BASE_PROFILES))
+def test_default_mode_equals_no_mode_on_every_base_profile(name):
+    rows = load_songs("data/songs.csv")
+    plain = recommend_songs(BASE_PROFILES[name], rows, k=20)
+
+    assert recommend_songs(BASE_PROFILES[name], rows, k=20, mode="balanced") == plain
+    assert recommend_songs(BASE_PROFILES[name], rows, k=20, mode=MODES["balanced"]) == plain
+    for song in rows:
+        assert score_song(BASE_PROFILES[name], song, "balanced") == score_song(BASE_PROFILES[name], song)
+
+
+def test_balanced_mode_uses_the_original_module_constants():
+    balanced = MODES["balanced"]
+
+    assert (balanced.energy_weight, balanced.mood_weight, balanced.valence_weight, balanced.genre_weight) == (
+        recommender.ENERGY_WEIGHT, recommender.MOOD_WEIGHT, recommender.VALENCE_WEIGHT, recommender.GENRE_WEIGHT)
+    assert balanced.energy_sigma == recommender.ENERGY_SIGMA
+    assert balanced.partial_mood_credit == recommender.PARTIAL_MOOD_CREDIT
+
+
+@pytest.mark.parametrize("name", list(MODES))
+def test_every_mode_has_all_weights_and_a_stated_maximum(name):
+    mode = MODES[name]
+
+    assert mode.name == name and mode.description
+    for weight in (mode.energy_weight, mode.mood_weight, mode.valence_weight, mode.genre_weight):
+        assert weight >= 0
+    assert mode.energy_sigma > 0 and 0 <= mode.partial_mood_credit <= 1
+    assert mode.max_score == pytest.approx(MODES["balanced"].max_score)  # every mode keeps the same base scale
+
+
+@pytest.mark.parametrize("name", list(MODES))
+def test_a_perfect_match_scores_the_modes_maximum(name):
+    perfect = {"genre": "r&b", "mood": "romantic", "energy": 0.48, "valence": 0.62}
+    song = song_by_title("Velvet Hours")
+
+    assert score_song(perfect, song, name)[0] == pytest.approx(MODES[name].max_score)
+
+
+@pytest.mark.parametrize("name", NON_DEFAULT_MODES)
+def test_reasons_show_the_active_modes_weights(name):
+    mode = MODES[name]
+    song = song_by_title("Sunrise City")  # pop, happy, energy 0.82, valence 0.84
+    _, reasons = score_song(PROFILES["pop/happy"], song, name)
+
+    assert f"mood match: happy (+{mode.mood_weight:.2f})" in reasons
+    assert f"genre match: pop (+{mode.genre_weight:.2f})" in reasons
+    energy_points = mode.energy_weight * recommender.math.exp(-(0.02 ** 2) / (2 * mode.energy_sigma ** 2))
+    assert any(r.startswith("energy 0.82 vs target 0.80") and f"(+{energy_points:.2f})" in r for r in reasons)
+    valence_points = mode.valence_weight * (1 - 0.04)
+    assert any(r.startswith("valence 0.84") and f"(+{valence_points:.2f})" in r for r in reasons)
+
+
+def test_partial_mood_credit_scales_with_the_modes_mood_weight():
+    song = song_by_title("Sunrise City")  # mood happy
+    _, reasons = score_song({"mood": "playful"}, song, "mood-first")
+
+    assert "similar mood: happy is close to playful (+2.00)" in reasons  # 4.0 * 0.5
+
+
+def test_energy_focused_mode_lets_a_loud_song_beat_the_label_match():
+    prefs = BASE_PROFILES["adv-conflict-sad"]  # classical + melancholy, but energy 0.95
+    assert titles(prefs, "balanced")[0] == "Iron Tide"
+    assert titles(prefs, "energy-focused")[:3] == ["Iron Tide", "Storm Runner", "Gym Hero"]
+    # genre-first and mood-first both hand #1 to the quiet classical piece that matches the labels
+    assert titles(prefs, "genre-first")[0] == "Moonlit Sonata"
+    assert titles(prefs, "mood-first")[0] == "Moonlit Sonata"
+    assert song_by_title("Moonlit Sonata")["energy"] < 0.3
+
+
+def test_modes_disagree_on_the_top_three_for_a_pop_listener_who_wants_euphoria():
+    prefs = BASE_PROFILES["high-energy pop"]  # pop genre, euphoric mood, energy 0.95
+    top3 = {name: titles(prefs, name, k=3) for name in ("balanced", "genre-first", "mood-first", "energy-focused")}
+
+    assert top3["balanced"] == ["Pulse Garden", "Sunrise City", "Gym Hero"]
+    assert top3["genre-first"] == ["Sunrise City", "Gym Hero", "Pulse Garden"]  # both pop songs jump ahead
+    assert top3["mood-first"] == ["Pulse Garden", "Sunrise City", "Sabor de Noche"]  # Gym Hero (intense) drops out
+    assert top3["energy-focused"] == ["Pulse Garden", "Gym Hero", "Sunrise City"]  # Gym Hero is near the energy target
+    assert len({tuple(order) for order in top3.values()}) == len(top3)
+
+
+def test_label_modes_pick_a_calm_song_for_calm_labels_with_high_energy():
+    prefs = BASE_PROFILES["adv-calm-labels-high-energy"]  # ambient + chill, energy 0.92
+
+    assert titles(prefs, "balanced")[0] == "Pulse Garden"
+    assert titles(prefs, "energy-focused")[0] == "Pulse Garden"
+    assert titles(prefs, "genre-first")[0] == "Spacewalk Thoughts"  # the only ambient song
+    assert titles(prefs, "mood-first")[0] == "Spacewalk Thoughts"
+
+
+def test_extension_terms_keep_their_weights_in_every_mode():
+    prefs = {**BASE_PREFS, "decade": 1990, "popularity": 50, "language": "en"}
+    song = song_by_title("Sunrise City")
+
+    def extension_points(mode):
+        with_ext, _ = score_song(prefs, song, mode)
+        without, _ = score_song(BASE_PREFS, song, mode)
+        return with_ext - without
+
+    assert all(extension_points(name) == pytest.approx(extension_points("balanced")) for name in MODES)
+
+
+def test_unknown_mode_raises_value_error_listing_valid_modes():
+    row = load_songs("data/songs.csv")[0]
+    for call in (
+        lambda: score_song(BASE_PREFS, row, "turbo"),
+        lambda: recommend_songs(BASE_PREFS, [row], 1, "turbo"),
+        lambda: Recommender([], mode="turbo"),
+    ):
+        with pytest.raises(ValueError) as error:
+            call()
+        assert "turbo" in str(error.value)
+        for name in MODES:
+            assert name in str(error.value)
+
+
+def test_mode_names_ignore_capital_letters_and_extra_spaces():
+    assert resolve_mode("  Mood-First ") is MODES["mood-first"]
+    assert resolve_mode(None) is MODES["balanced"]
+
+
+def test_a_custom_mode_object_can_be_passed_without_registering_it():
+    custom = ScoringMode("tiny", "only energy", 1.0, 0.0, 0.0, 0.0)
+    rows = load_songs("data/songs.csv")
+    score, reasons = score_song({"energy": 0.5, "genre": "pop"}, rows[0], custom)
+
+    assert score <= 1.0 and "genre match: pop (+0.00)" in reasons
+    assert "tiny" not in MODES
+
+
+@pytest.mark.parametrize("name", list(MODES))
+def test_recommender_with_a_mode_matches_recommend_songs_with_that_mode(name):
+    rows = load_songs("data/songs.csv")
+    user = UserProfile("pop", "euphoric", 0.95, False, target_valence=0.85)
+    expected = [row["id"] for row, _, _ in recommend_songs(Recommender._prefs(user), rows, 5, name)]
+    rec = Recommender([Song(**row) for row in rows], mode=name)
+
+    assert [song.id for song in rec.recommend(user, k=5)] == expected
+    top = rec.recommend(user, k=1)[0]
+    _, reasons = score_song(Recommender._prefs(user), asdict(top), name)
+    assert rec.explain_recommendation(user, top) == "; ".join(reasons)
+
+
+def test_recommender_without_a_mode_is_balanced():
+    assert make_small_recommender().mode is MODES["balanced"]
+
+
+def run_cli(*args):
+    return subprocess.run([sys.executable, "-m", "src.main", *args],
+                          cwd=REPO_ROOT, capture_output=True, text=True)
+
+
+def test_cli_mode_prints_one_extra_header_line_and_uses_the_modes_weights():
+    plain = run_cli("pop/happy")
+    result = run_cli("pop/happy", "--mode", "mood-first")
+
+    assert result.returncode == 0
+    assert " Mode: mood-first" in result.stdout.splitlines()
+    assert "mood match: happy (+4.00)" in result.stdout
+    assert [line for line in result.stdout.splitlines() if line != " Mode: mood-first"][:4] == plain.stdout.splitlines()[:4]
+    assert "Mode:" not in plain.stdout
+
+
+def test_cli_explicit_balanced_mode_is_identical_to_no_mode():
+    for args in (["pop/happy"], ["all"], ["adversarial"]):
+        assert run_cli(*args, "--mode", "balanced").stdout == run_cli(*args).stdout
+
+
+def test_cli_list_modes_prints_every_mode_and_exits_zero():
+    result = run_cli("--list-modes")
+
+    assert result.returncode == 0
+    for name, mode in MODES.items():
+        assert name in result.stdout and mode.description in result.stdout
+    assert "(default)" in result.stdout and "Loaded songs" not in result.stdout
+    assert result.stdout.count("(base max ") == len(MODES) and "(max " not in result.stdout
+
+
+def test_cli_unknown_mode_fails_with_a_clear_message():
+    result = run_cli("pop/happy", "--mode", "turbo")
+
+    assert result.returncode == 2
+    assert "turbo" in result.stderr and "balanced" in result.stderr and result.stdout == ""
+
+
+def test_cli_unknown_profile_message_and_exit_code_are_unchanged():
+    result = run_cli("nope")
+
+    assert result.returncode == 1
+    assert result.stderr.startswith("Unknown profile 'nope'. Choose from: all, adversarial, extensions, pop/happy")
+
+
+WEIGHT_TABLE = {  # energy, mood, valence, genre
+    "balanced": (4.0, 2.0, 1.0, 1.0),
+    "genre-first": (2.0, 1.5, 0.5, 4.0),
+    "mood-first": (2.0, 4.0, 1.0, 1.0),
+    "energy-focused": (5.5, 1.0, 1.0, 0.5),
+}
+
+
+@pytest.mark.parametrize("name", list(WEIGHT_TABLE))
+def test_the_four_shipped_modes_keep_their_exact_weights(name):
+    mode = MODES[name]
+
+    assert (mode.energy_weight, mode.mood_weight, mode.valence_weight, mode.genre_weight) == WEIGHT_TABLE[name]
+    assert (mode.energy_sigma, mode.partial_mood_credit) == (0.25, 0.5)
+
+
+def test_energy_sigma_and_partial_mood_credit_change_the_numbers():
+    song = song_by_title("Sunrise City")  # pop, happy, energy 0.82
+    wide = ScoringMode("wide", "x", 4.0, 2.0, 1.0, 1.0, energy_sigma=0.5, partial_mood_credit=0.25)
+    prefs = {"energy": 0.62, "mood": "playful"}  # gap 0.20, same-cluster mood
+
+    score, reasons = score_song(prefs, song, wide)
+    energy_points = 4.0 * recommender.math.exp(-(0.2 ** 2) / (2 * 0.5 ** 2))
+    assert score == pytest.approx(energy_points + 2.0 * 0.25)
+    assert f"energy 0.82 vs target 0.62 (+{energy_points:.2f})" in reasons
+    assert "similar mood: happy is close to playful (+0.50)" in reasons
+    assert score != pytest.approx(score_song(prefs, song)[0])
+
+
+def tied_songs():
+    base = {"artist": "x", "genre": "pop", "mood": "happy", "tempo_bpm": 100.0, "valence": 0.5,
+            "danceability": 0.5, "acousticness": 0.5}
+    return [
+        {**base, "id": 1, "title": "Beta", "energy": 0.75},
+        {**base, "id": 2, "title": "Alpha", "energy": 0.25},
+    ]
+
+
+@pytest.mark.parametrize("name", list(MODES))
+def test_equal_scores_and_gaps_are_broken_by_title_in_every_mode(name):
+    ranked = recommend_songs({"energy": 0.5, "mood": "happy"}, tied_songs(), 2, name)
+
+    assert ranked[0][1] == ranked[1][1]  # a real tie, so the title decides
+    assert [song["title"] for song, _, _ in ranked] == ["Alpha", "Beta"]
+
+
+def test_equal_scores_are_broken_by_the_smaller_energy_gap_before_the_title():
+    flat = ScoringMode("flat", "energy worth nothing", 0.0, 2.0, 1.0, 1.0)  # scores tie whatever the energy
+    songs = [{**tied_songs()[1], "title": "Alpha", "energy": 0.25}, {**tied_songs()[0], "title": "Zulu", "energy": 0.6}]
+    ranked = recommend_songs({"energy": 0.5, "mood": "happy"}, songs, 2, flat)
+
+    assert ranked[0][1] == ranked[1][1]
+    assert [song["title"] for song, _, _ in ranked] == ["Zulu", "Alpha"]  # gap 0.1 beats gap 0.25
+
+
+@pytest.mark.parametrize("name", list(MODES))
+@pytest.mark.parametrize("profile", ["adv-conflict-sad", "high-energy pop", "adv-energy-only"])
+def test_ranking_is_sorted_by_score_then_energy_gap_then_title_in_every_mode(name, profile):
+    prefs = BASE_PROFILES[profile]
+    rows = load_songs("data/songs.csv")
+    ranked = recommend_songs(prefs, rows, k=len(rows), mode=name)
+    target = prefs.get("energy")
+
+    def key(item):
+        song, score, _ = item
+        return (-score, 0.0 if target is None else abs(song["energy"] - target), song["title"])
+
+    assert [key(item) for item in ranked] == sorted(key(item) for item in ranked)
+    assert [score for _, score, _ in ranked] == [score_song(prefs, song, name)[0] for song, _, _ in ranked]
+
+
+@pytest.mark.parametrize("bad", [
+    {"energy_weight": -0.1},
+    {"mood_weight": float("nan")},
+    {"valence_weight": float("inf")},
+    {"genre_weight": -1.0},
+    {"energy_sigma": 0.0},
+    {"energy_sigma": -0.25},
+    {"energy_sigma": float("inf")},
+    {"partial_mood_credit": -0.1},
+    {"partial_mood_credit": 1.5},
+])
+def test_scoring_mode_rejects_bad_numbers(bad):
+    fields = {"energy_weight": 1.0, "mood_weight": 1.0, "valence_weight": 1.0, "genre_weight": 1.0, **bad}
+
+    with pytest.raises(ValueError, match="mode 'bad'"):
+        ScoringMode("bad", "x", **fields)
+
+
+def test_scoring_mode_accepts_zero_weights_and_the_credit_limits():
+    ScoringMode("zeros", "x", 0.0, 0.0, 0.0, 0.0, partial_mood_credit=0.0)
+    ScoringMode("full", "x", 1.0, 1.0, 1.0, 1.0, partial_mood_credit=1.0)

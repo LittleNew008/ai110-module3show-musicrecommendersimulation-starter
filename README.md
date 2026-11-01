@@ -40,10 +40,10 @@ flowchart TD
 
     subgraph PROCESS["PROCESS: the loop, judging every song"]
         NEXT["Take next song"] --> SCORE["score_song(user, song)"]
-        SCORE --> E["Energy closeness (max 4.0)"]
-        SCORE --> M["Mood match (max 2.0)"]
-        SCORE --> V["Valence closeness (max 1.0)"]
-        SCORE --> G["Genre match (max 1.0)"]
+        SCORE --> E["Energy closeness (default mode: max 4.0)"]
+        SCORE --> M["Mood match (default mode: max 2.0)"]
+        SCORE --> V["Valence closeness (default mode: max 1.0)"]
+        SCORE --> G["Genre match (default mode: max 1.0)"]
         SCORE -.-> X["Optional extension terms (max 5.0 in total)<br/>tags, decade, popularity,<br/>instrumentalness, speechiness, language"]
         E --> SUM["Total score + reasons"]
         M --> SUM
@@ -69,7 +69,7 @@ In code: `main.py` builds the profile and calls `recommend_songs()`, which runs 
 
 ### Algorithm recipe: scoring and ranking
 
-**Scoring rule (one song):**
+**Scoring rule (one song), default (balanced) mode:**
 
 ```
 score = 4.0 * exp(-(song.energy - target_energy)^2 / (2 * 0.25^2))   # energy closeness
@@ -78,11 +78,11 @@ score = 4.0 * exp(-(song.energy - target_energy)^2 / (2 * 0.25^2))   # energy cl
       + 1.0 * (1 if song.genre == favorite_genre else 0)
 ```
 
-The maximum score is 8.0. Targets outside 0 to 1 are clamped to that range first.
+In the default (balanced) mode the maximum base score is 8.0. Targets outside 0 to 1 are clamped to that range first. Other scoring modes change the four weights (see "Challenge 2: Multiple scoring modes"), and everything below describes the default mode.
 
-This base recipe is unchanged. The extension terms (see "Optional Extensions") are opt-in: each one is added only when the profile contains its key, and together they add up to at most +5.0. So the maximum is 8.0 for a base profile and up to 13.0 for a profile that uses every extension key.
+The default (balanced) base recipe is unchanged. The extension terms (see "Optional Extensions") are opt-in: each one is added only when the profile contains its key, and together they add up to at most +5.0. So in the default mode the maximum is 8.0 for a base profile and up to 13.0 for a profile that uses every extension key.
 
-| Term | Max points | Why |
+| Term | Max points (default mode) | Why |
 |---|---|---|
 | Energy (Gaussian closeness) | 4.0 | Strongest, cleanest signal. The Gaussian shape forgives small gaps but penalizes large ones, so labels usually cannot outvote a very wrong energy level. The exception is an extreme target where no song is close: then the labels can decide the order (see the stress test). |
 | Mood | 2.0 | Closest thing to a "vibe" label. Worth more than genre. |
@@ -104,7 +104,7 @@ This base recipe is unchanged. The extension terms (see "Optional Extensions") a
 
 ### Biases I expect
 
-- **Energy dominates.** Energy is half of the maximum score (4.0 of 8.0). A song that matches a listener's mood and genre perfectly but sits at the wrong energy level will rarely win, and a listener whose taste spans very different energy levels (calm study music and high-energy workout music) will be pulled toward the middle and served neither.
+- **Energy dominates.** Energy is half of the maximum score in the default mode (4.0 of 8.0). A song that matches a listener's mood and genre perfectly but sits at the wrong energy level will rarely win, and a listener whose taste spans very different energy levels (calm study music and high-energy workout music) will be pulled toward the middle and served neither.
 - **Labels beat measurements.** Mood and genre are exact text matches (with partial credit only inside my hand-made mood clusters), so the system rewards a song for carrying the right tag, not for sounding right. Moods outside the clusters, such as "romantic" or "aggressive", get no partial credit, and "indie pop" gets none for a "pop" listener. The clusters are my own judgment, not data.
 - **Valence is easy to outvote.** It is worth only 1.0 point, so a mood label can outweigh it. In testing, an intense pop song (Gym Hero) still reached #2 for a rock listener who wanted low-valence music.
 - **The catalog favors some listeners.** There are only 20 songs and most genres and moods appear once. Lofi and chill have three songs each, so a lofi listener gets a full top 5 of good matches, while a metal or classical listener gets exactly one genre match and then filler chosen by energy alone.
@@ -140,6 +140,10 @@ python -m src.main all           # the four everyday profiles
 python -m src.main adversarial   # the six edge-case profiles
 python -m src.main extensions    # the four profiles that use the extension attributes
 python -m src.main ext-90s-nostalgia   # one extension profile (also ext-hidden-gems, ext-instrumental-focus, ext-chart-hits)
+python -m src.main --mode MODE         # rank with another scoring mode (see below)
+python -m src.main lofi/chill --mode energy-focused   # a profile plus a mode
+python -m src.main all --mode genre-first             # every everyday profile in one mode
+python -m src.main --list-modes        # show the four scoring modes and exit
 ```
 
 ### Running Tests
@@ -150,7 +154,7 @@ Run the tests with:
 pytest
 ```
 
-There are 45 test cases in `tests/test_recommender.py` (`pytest --collect-only -q` counts parametrized cases separately). They check the `Recommender` class (including a reversed-input test and a match against the function-based version), the input cleaning, and the extension attributes (CSV loading, each scoring term with hand-computed values, the `UserProfile` extension fields, and the `extensions` CLI keyword). A few extension tests check exact scores; the original tests do not.
+There are 117 test cases in `tests/test_recommender.py`, written as 61 test functions (`pytest --collect-only -q` counts parametrized cases separately). They check the `Recommender` class (including a reversed-input test and a match against the function-based version), the input cleaning, the extension attributes (CSV loading, each scoring term with hand-computed values, the `UserProfile` extension fields, and the `extensions` CLI keyword), and the scoring modes (the exact weight table, `ScoringMode` validation, tie-breaking in every mode, and the `--mode` and `--list-modes` flags). A few extension tests check exact scores; the original tests do not.
 
 ---
 
@@ -207,6 +211,8 @@ Other profiles are defined in `PROFILES` in `src/main.py` (the extension profile
 ---
 
 ## Experiments You Tried
+
+Every result in this section was run in the default (balanced) mode, before the scoring modes existed, and the default output has not changed since.
 
 ### Stress test: diverse profiles
 
@@ -701,12 +707,14 @@ Output of `python -m src.main pop/happy` with the experimental weights:
 
 **Verdict: more different than more accurate.** The change fixed the one case it was aimed at, the extreme-energy profile, where label matches had been outranking songs that fit the energy target. But it made two listeners slightly worse off (the sad listener and the pop listener), and it left the near-ties and the Gym Hero versus Iron Tide problem alone. The top pick is robust to this change, while ranks 3 to 5 are sensitive to the weights. That fits the earlier finding that energy already dominates: doubling it makes the mood and genre labels matter even less, which helps users with extreme energy targets and hurts users who care about mood. I kept the original weights. Absolute scores are not comparable between the two settings, since the maximum moved from 8.0 to 11.5.
 
+Since then, scoring modes make this kind of weight experiment a command-line switch (`--mode`), without editing the code. See "Challenge 2: Multiple scoring modes".
+
 ---
 
 ## Limitations and Risks
 
 - **Tiny catalog.** There are 20 songs and most genres appear once. The numbers are invented, not measurements: I wrote the energy, valence, and other base values for 10 of the songs, and the extension values (popularity, decade, mood tags, instrumentalness, speechiness, language) are invented for all 20.
-- **Energy dominates.** It is half of the points. Listeners who want very quiet music (below 0.30 energy) are served worst, because the catalog has almost no songs there.
+- **Energy dominates.** In the default mode it is half of the points. Listeners who want very quiet music (below 0.30 energy) are served worst, because the catalog has almost no songs there.
 - **Labels must match word for word.** "Indie pop" earns nothing for a "pop" listener, and "romantic" is in no group of related moods.
 - **One taste per profile.** A profile cannot hold several favorites or dislikes. `likes_acoustic` is stored but not scored.
 - **Weak matches look confident.** The system always prints five songs, even when nothing matched, and it gives no warning. (Bad input is handled: numbers are clamped to their range, capital letters and extra spaces are ignored, and a non-numeric target or an empty profile raises a clear error. Values inside `songs.csv` are not checked, so a typo such as text in the `popularity` column crashes the scorer, and a NaN or out-of-range number gives odd output.)
@@ -820,3 +828,107 @@ Loaded songs: 20
 ```
 
 The 1990s songs move up the list because of the decade and tag terms, even when their energy is a little off.
+
+### Challenge 2: Multiple scoring modes
+
+**What I added.** Four named scoring modes. A mode is a set of weights for the four base terms (energy, mood, valence, genre). The default is `balanced`, which is the recipe described above, so nothing changes unless you ask for another mode. Each mode's weights add up to 8.0, so base scores stay on the same scale. The other settings are shared by all modes: the energy curve width (0.25) and the half credit for a close mood.
+
+| Mode | Energy | Mood | Valence | Genre | Base max | Idea |
+|---|---|---|---|---|---|---|
+| `balanced` (default) | 4.0 | 2.0 | 1.0 | 1.0 | 8.0 | Standard recipe |
+| `genre-first` | 2.0 | 1.5 | 0.5 | 4.0 | 8.0 | The genre label dominates |
+| `mood-first` | 2.0 | 4.0 | 1.0 | 1.0 | 8.0 | The mood label dominates |
+| `energy-focused` | 5.5 | 1.0 | 1.0 | 0.5 | 8.0 | Energy is almost the whole score |
+
+"Base max" is the highest score for a profile without extension keys. The extension terms from Challenge 1 keep their own weights in every mode, so they are extra on top.
+
+**How to switch.**
+
+- Command line: `python -m src.main pop/happy --mode mood-first`. Show the modes with `python -m src.main --list-modes`. Without `--mode`, the output is exactly the same as before. With another mode, the header gets one extra line, ` Mode: <name>`.
+- Python: `recommend_songs(profile, songs, k=5, mode="genre-first")` and `score_song(profile, song, mode="genre-first")`. The object-style API takes it in the constructor: `Recommender(songs, mode="mood-first")`. `mode` can be a name, a `ScoringMode` object, or left out for the default. An unknown name raises a `ValueError` that lists the valid modes.
+
+**The design pattern.** This is a data-driven Strategy pattern. A mode is a frozen dataclass of weights (`ScoringMode`), and the modes live in a registry dict (`MODES`). The scoring code (`score_song`) is shared, and it reads the weights from whichever mode it is given. So adding a mode is one new line in `MODES`, with no change to the scoring code. The honest limit: a mode changes the weights, not the shape of a term. A mode cannot turn the energy curve into a straight line, for example, without a code change.
+
+**Top 3 under each mode** (real runs of `recommend_songs`, score in brackets). The modes disagree most when the profile's labels and numbers pull in different directions.
+
+`adv-conflict-sad` (classical, melancholy, energy 0.95, valence 0.20):
+
+| Mode | #1 | #2 | #3 |
+|---|---|---|---|
+| balanced | Iron Tide (4.99) | Storm Runner (4.67) | Night Drive Loop (4.61) |
+| genre-first | Moonlit Sonata (6.01) | Night Drive Loop (2.56) | Iron Tide (2.49) |
+| mood-first | Moonlit Sonata (5.99) | Night Drive Loop (4.16) | Dust Road Home (3.10) |
+| energy-focused | Iron Tide (6.48) | Storm Runner (6.15) | Gym Hero (5.91) |
+
+`high-energy pop` (pop, euphoric, energy 0.95, valence 0.85):
+
+| Mode | #1 | #2 | #3 |
+|---|---|---|---|
+| balanced | Pulse Garden (6.94) | Sunrise City (6.48) | Gym Hero (5.91) |
+| genre-first | Sunrise City (6.99) | Gym Hero (6.45) | Pulse Garden (3.97) |
+| mood-first | Pulse Garden (6.96) | Sunrise City (5.74) | Sabor de Noche (4.62) |
+| energy-focused | Pulse Garden (7.43) | Gym Hero (6.90) | Sunrise City (6.79) |
+
+For the sad-but-loud listener, the label-heavy modes pick the quiet classical piece (Moonlit Sonata), and the energy mode picks a loud metal song (Iron Tide). Scores are only comparable inside one mode.
+
+**Real output** of `python -m src.main --list-modes`:
+
+```
+balanced (default): Standard recipe: energy first, then mood, valence and genre.
+    energy 4, mood 2, valence 1, genre 1 (base max 8)
+genre-first: The genre label dominates, with energy and mood in supporting roles.
+    energy 2, mood 1.5, valence 0.5, genre 4 (base max 8)
+mood-first: The mood label dominates, with energy as the second voice.
+    energy 2, mood 4, valence 1, genre 1 (base max 8)
+energy-focused: Energy closeness is almost the whole score.
+    energy 5.5, mood 1, valence 1, genre 0.5 (base max 8)
+```
+
+**Real output** of `python -m src.main pop/happy --mode mood-first`:
+
+```
+Loaded songs: 20
+================================================================
+ Top 5 recommendations for profile: pop/happy
+ Mode: mood-first
+ Targets: genre=pop, mood=happy, energy=0.80, valence=0.80
+================================================================
+
+1. Sunrise City by Neon Echo
+   Score: 7.95   (pop, happy)
+   Why:
+     - energy 0.82 vs target 0.80 (+1.99)
+     - mood match: happy (+4.00)
+     - valence 0.84 vs target 0.80 (+0.96)
+     - genre match: pop (+1.00)
+
+2. Rooftop Lights by Indigo Parade
+   Score: 6.96   (indie pop, happy)
+   Why:
+     - energy 0.76 vs target 0.80 (+1.97)
+     - mood match: happy (+4.00)
+     - valence 0.81 vs target 0.80 (+0.99)
+
+3. Sabor de Noche by Marisol Vega
+   Score: 4.90   (latin, playful)
+   Why:
+     - energy 0.80 vs target 0.80 (+2.00)
+     - similar mood: playful is close to happy (+2.00)
+     - valence 0.90 vs target 0.80 (+0.90)
+
+4. Pulse Garden by Kinetic Bloom
+   Score: 4.70   (edm, euphoric)
+   Why:
+     - energy 0.92 vs target 0.80 (+1.78)
+     - similar mood: euphoric is close to happy (+2.00)
+     - valence 0.88 vs target 0.80 (+0.92)
+
+5. Island Breeze by Sol Rivera
+   Score: 4.30   (reggae, uplifting)
+   Why:
+     - energy 0.58 vs target 0.80 (+1.36)
+     - similar mood: uplifting is close to happy (+2.00)
+     - valence 0.86 vs target 0.80 (+0.94)
+```
+
+**A change in the command line.** The command line now uses `argparse`. Normal use works as before. But an unknown flag (such as `--bogus`) or an extra word now exits with code 2 and a usage message. Before, the old code printed an "Unknown profile" message and exited with code 1. This matters for profile names with spaces: write `"high-energy pop"` in quotes. An unquoted `high-energy pop` is now two words, and it is rejected by `argparse`. An unknown profile name on its own still prints the same "Unknown profile" message and exits with code 1.
