@@ -146,18 +146,53 @@ You can add more tests in `tests/test_recommender.py`.
 
 ## Sample Recommendation Output
 
-Paste a sample of your recommender's output here as a text block so a reader can see what it produces:
+Output of `python -m src.main` for the default pop/happy profile:
 
 ```
-# e.g.:
-# User profile: genre=indie, mood=chill, energy=low
-# Recommendations:
-#   1. ...
-#   2. ...
-#   3. ...
+Loaded songs: 20
+================================================================
+ Top 5 recommendations for profile: pop/happy
+ Targets: genre=pop, mood=happy, energy=0.80, valence=0.80
+================================================================
+
+1. Sunrise City by Neon Echo
+   Score: 7.95   (pop, happy)
+   Why:
+     - energy 0.82 vs target 0.80 (+3.99)
+     - mood match: happy (+2.00)
+     - valence 0.84 vs target 0.80 (+0.96)
+     - genre match: pop (+1.00)
+
+2. Rooftop Lights by Indigo Parade
+   Score: 6.94   (indie pop, happy)
+   Why:
+     - energy 0.76 vs target 0.80 (+3.95)
+     - mood match: happy (+2.00)
+     - valence 0.81 vs target 0.80 (+0.99)
+
+3. Sabor de Noche by Marisol Vega
+   Score: 5.90   (latin, playful)
+   Why:
+     - energy 0.80 vs target 0.80 (+4.00)
+     - similar mood: playful is close to happy (+1.00)
+     - valence 0.90 vs target 0.80 (+0.90)
+
+4. Pulse Garden by Kinetic Bloom
+   Score: 5.48   (edm, euphoric)
+   Why:
+     - energy 0.92 vs target 0.80 (+3.56)
+     - similar mood: euphoric is close to happy (+1.00)
+     - valence 0.88 vs target 0.80 (+0.92)
+
+5. Gym Hero by Max Pulse
+   Score: 5.46   (pop, intense)
+   Why:
+     - energy 0.93 vs target 0.80 (+3.49)
+     - valence 0.77 vs target 0.80 (+0.97)
+     - genre match: pop (+1.00)
 ```
 
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or demo video link here -->
+Other profiles are defined in `PROFILES` in `src/main.py`. For example, `python -m src.main lofi/chill` runs the late-night study listener.
 
 ---
 

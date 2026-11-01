@@ -21,16 +21,20 @@ Prompts:
 
 ## 3. How the Model Works  
 
-Explain your scoring approach in simple language.  
+The recommender works like a judge at a talent show who scores every act against a checklist and then announces the highest scores.
 
-Prompts:  
+**What it knows about a song:** its genre (like pop or lofi), its mood (like happy or chill), how energetic it feels, and how positive or sunny it sounds (called valence). **What it knows about you:** your favorite genre, your favorite mood, and the energy and positivity level you are in the mood for.
 
-- What features of each song are used (genre, energy, mood, etc.)  
-- What user preferences are considered  
-- How does the model turn those into a score  
-- What changes did you make from the starter logic  
+**How it scores a song.** For every song in the catalog it hands out points in four categories, for a possible total of 8:
 
-Avoid code here. Pretend you are explaining the idea to a friend who does not program.
+- **Energy, up to 4 points.** The closer a song's energy is to the level you asked for, the more points it earns. A song that is a little off loses only a little, and a song that is far off loses a lot. This is the biggest category, because energy is the clearest difference between, say, a study playlist and a workout playlist.
+- **Mood, up to 2 points.** A song with exactly your mood earns the full 2 points. A song with a related mood earns half. For example, "playful" counts as close to "happy" and "relaxed" counts as close to "chill".
+- **Positivity, up to 1 point.** Songs closer to your preferred level of sunniness earn more.
+- **Genre, 1 point.** A song in your favorite genre gets a bonus point. Genre is worth less than mood on purpose, because with only 20 songs most genres have a single song, and a genre label alone should not beat a song that fits your mood and energy.
+
+**How it picks what to show.** Once every song has a score, the songs are lined up from highest to lowest and the top five are shown. If two songs tie, the one whose energy is closer to your target comes first. Along with each pick, the recommender lists the points it earned in each category, so you can see exactly why it was chosen.
+
+**What changed from the starter code.** The starter version only returned the first few songs in the file, without looking at the user at all. This version scores every song, rewards closeness instead of "bigger is better", gives partial credit for similar moods, and explains each result. It runs from the command line, with no app or website.
 
 ---
 
