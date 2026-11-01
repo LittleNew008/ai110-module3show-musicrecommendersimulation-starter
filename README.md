@@ -749,6 +749,17 @@ The full model card is here: [**Model Card**](model_card.md). My personal reflec
 
 ## Optional Extensions
 
+Four extensions were added on top of the core project. Each one is optional and off by default, so the results documented above did not change. A regression check compared the original ten profiles, and the output of `all` and `adversarial`, before and after every extension.
+
+| Challenge | What it adds | How to try it |
+|---|---|---|
+| 1. Advanced song features | Six new song columns and opt-in scoring terms | `python -m src.main extensions` |
+| 2. Multiple scoring modes | Four modes (balanced, genre-first, mood-first, energy-focused) | `python -m src.main pop/happy --mode mood-first` |
+| 3. Diversity penalty | Fewer repeated artists and genres in the top results | `python -m src.main lofi/chill --diverse` |
+| 4. Visual summary table | A table that includes the reasons for each score | `python -m src.main pop/happy --table` |
+
+They can be combined, for example `python -m src.main all --mode mood-first --diverse --table --width 90`. Each section below explains the choices, shows real output, and lists the limits. The AI log (`ai_interactions.md`) records how each one was built with three AI agents: one to implement, one to review, and one to finalize.
+
 ### Challenge 1: Advanced song features
 
 **What I added.** Six new columns in `data/songs.csv`. All values are invented (written by the AI assistant and checked by me), not measured from real music:
