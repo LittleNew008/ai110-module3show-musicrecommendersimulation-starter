@@ -97,7 +97,7 @@ The challenge was "Create Multiple Scoring Modes": let the user pick between nam
 - Agent B reviewed A's work, read-only.
 - Agent C fixed B's findings and updated the docs and this log.
 
-I prototyped the work on a branch called `experiment/scoring-modes`. My plan is to merge it into `main` after the checks pass.
+I prototyped the work on a branch called `experiment/scoring-modes`. After the checks passed, I merged it into `main`.
 
 **Prompts used:**
 
