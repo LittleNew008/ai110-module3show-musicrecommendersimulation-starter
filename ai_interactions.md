@@ -181,7 +181,7 @@ The challenge was "Visual Summary Table": show the top recommendations as a form
 - Agent B reviewed A's work, read-only, and ran its own checker.
 - Agent C fixed B's findings and updated the docs and this log.
 
-I worked on a branch called `challenge-4-table`.
+I worked on a branch called `challenge-4-table`. After the checks passed, I merged it into `main`.
 
 **Prompts used:**
 
